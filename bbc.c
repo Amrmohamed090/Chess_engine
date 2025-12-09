@@ -403,7 +403,26 @@ void init_leapers_attacks(){
 }
 
 
-U64 set_occupancy(int index, int bits_in_mask, U64 attack_mask, )
+U64 set_occupancy(int index, int bits_in_mask, U64 attack_mask){
+    // occupancy map
+    U64 occupancy = 0ULL;
+
+    // loop over the range of bits within attack mask
+    for (int count = 0; count < bits_in_mask; count++){
+        // get LS1B index of attacks mask
+
+        int square = get_ls1b_index(attack_mask);
+
+        // pop LS1B in attack map
+        pop_bit(attack_mask, square);
+
+        // make sure occupancy is on board
+        if (index & (1 << count)) occupancy |= (1ULL << square);
+    }
+
+    //return occupancy map
+    return occupancy;
+}
 
 int main(){
 
@@ -412,23 +431,14 @@ int main(){
     init_leapers_attacks();
 
 
-    // init occupancy bitboard
+    // mask piece attacks at given square
+    U64 attack_mask = mask_rook_attacks(a1);
 
-    U64 block = 0ULL;
+    // loop over occupancy indicies
+    for (int i = 0; i < 4095; i++){
+        U64 occupancy = set_occupancy(i, count_bits(attack_mask), attack_mask);
 
-    set_bit(block,d6);
-    set_bit(block,d1);
-    set_bit(block,e4);
-    set_bit(block,b4);
-    
-    set_bit(block,b3);
-
-    print_bitboard(block);
-
-    printf("index: %d\ncoordinate:%s", get_ls1b_index(block), coordinates_to_square[get_ls1b_index(block)]);
-    U64 test = 0ULL;
-    set_bit(test, get_ls1b_index(block));
-    print_bitboard(test);
+        print_bitboard(occupancy);}
 
     // for (int square = 0; square < 64; square ++)
     // print_bitboard(bishob_attacks_on_the_fly(square, 0ULL));
