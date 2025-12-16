@@ -6,9 +6,16 @@
 #define U64 unsigned long long
 
 // sides to move (colors)
-enum { white, black};
+enum {white, black, both};
 // bishop and rook
 enum {rook, bishop};
+
+// FEN dedug positions
+#define empty_board "8/8/8/8/8/8/8/8 w - - "
+#define start_position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 "
+#define tricky_position "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 "
+#define killer_position "rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1"
+#define cmk_position "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1NPP/PPP1NPB1/R1BQ1RK1 b - - 0 9 "
 
 
 const int bishop_relevant_bits[64] = {
@@ -170,10 +177,6 @@ U64 bishop_magic_numbers[64] = {
     0x4010011029020020ULL
 };
 
-
-
-
-
 enum {
     a8, b8, c8, d8, e8, f8, g8, h8,
     a7, b7, c7, d7, e7, f7, g7, h7,
@@ -182,11 +185,11 @@ enum {
     a4, b4, c4, d4, e4, f4, g4, h4,
     a3, b3, c3, d3, e3, f3, g3, h3,
     a2, b2, c2, d2, e2, f2, g2, h2,
-    a1, b1, c1, d1, e1, f1, g1, h1
+    a1, b1, c1, d1, e1, f1, g1, h1, no_sq
 };
 
 
-const char* coordinates_to_square[] = {
+const char* square_to_coordinates[] = {
     "a8", "b8", "c8", "d8", "e8", "f8", "g8", "h8",
     "a7", "b7", "c7", "d7", "e7", "f7", "g7", "h7",
     "a6", "b6", "c6", "d6", "e6", "f6", "g6", "h6",
@@ -196,6 +199,173 @@ const char* coordinates_to_square[] = {
     "a2", "b2", "c2", "d2", "e2", "f2", "g2", "h2",
     "a1", "b1", "c1", "d1", "e1", "f1", "g1", "h1"
 };
+
+/**********************************\
+ ==================================
+ 
+            Chess board
+ 
+ ==================================
+\**********************************/
+
+/* WHITE PIECES
+                            WHITE PIECES
+
+
+        Pawns                  Knights              Bishops
+        
+  8  0 0 0 0 0 0 0 0    8  0 0 0 0 0 0 0 0    8  0 0 0 0 0 0 0 0
+  7  0 0 0 0 0 0 0 0    7  0 0 0 0 0 0 0 0    7  0 0 0 0 0 0 0 0
+  6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0
+  5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0
+  4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0
+  3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0
+  2  1 1 1 1 1 1 1 1    2  0 0 0 0 0 0 0 0    2  0 0 0 0 0 0 0 0
+  1  0 0 0 0 0 0 0 0    1  0 1 0 0 0 0 1 0    1  0 0 1 0 0 1 0 0
+
+     a b c d e f g h       a b c d e f g h       a b c d e f g h
+
+
+         Rooks                 Queens                 King
+
+  8  0 0 0 0 0 0 0 0    8  0 0 0 0 0 0 0 0    8  0 0 0 0 0 0 0 0
+  7  0 0 0 0 0 0 0 0    7  0 0 0 0 0 0 0 0    7  0 0 0 0 0 0 0 0
+  6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0
+  5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0
+  4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0
+  3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0
+  2  0 0 0 0 0 0 0 0    2  0 0 0 0 0 0 0 0    2  0 0 0 0 0 0 0 0
+  1  1 0 0 0 0 0 0 1    1  0 0 0 1 0 0 0 0    1  0 0 0 0 1 0 0 0
+
+     a b c d e f g h       a b c d e f g h       a b c d e f g h
+
+
+                            BLACK PIECES
+
+
+        Pawns                  Knights              Bishops
+        
+  8  0 0 0 0 0 0 0 0    8  0 1 0 0 0 0 1 0    8  0 0 1 0 0 1 0 0
+  7  1 1 1 1 1 1 1 1    7  0 0 0 0 0 0 0 0    7  0 0 0 0 0 0 0 0
+  6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0
+  5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0
+  4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0
+  3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0
+  2  0 0 0 0 0 0 0 0    2  0 0 0 0 0 0 0 0    2  0 0 0 0 0 0 0 0
+  1  0 0 0 0 0 0 0 0    1  0 0 0 0 0 0 0 0    1  0 0 0 0 0 0 0 0
+
+     a b c d e f g h       a b c d e f g h       a b c d e f g h
+
+
+         Rooks                 Queens                 King
+
+  8  1 0 0 0 0 0 0 1    8  0 0 0 1 0 0 0 0    8  0 0 0 0 1 0 0 0
+  7  0 0 0 0 0 0 0 0    7  0 0 0 0 0 0 0 0    7  0 0 0 0 0 0 0 0
+  6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0
+  5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0
+  4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0
+  3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0
+  2  0 0 0 0 0 0 0 0    2  0 0 0 0 0 0 0 0    2  0 0 0 0 0 0 0 0
+  1  0 0 0 0 0 0 0 0    1  0 0 0 0 0 0 0 0    1  0 0 0 0 0 0 0 0
+
+     a b c d e f g h       a b c d e f g h       a b c d e f g h
+
+
+
+                             OCCUPANCIES
+
+
+     White occupancy       Black occupancy       All occupancies
+
+  8  0 0 0 0 0 0 0 0    8  1 1 1 1 1 1 1 1    8  1 1 1 1 1 1 1 1
+  7  0 0 0 0 0 0 0 0    7  1 1 1 1 1 1 1 1    7  1 1 1 1 1 1 1 1
+  6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0    6  0 0 0 0 0 0 0 0
+  5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0    5  0 0 0 0 0 0 0 0
+  4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0    4  0 0 0 0 0 0 0 0
+  3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0    3  0 0 0 0 0 0 0 0
+  2  1 1 1 1 1 1 1 1    2  0 0 0 0 0 0 0 0    2  1 1 1 1 1 1 1 1
+  1  1 1 1 1 1 1 1 1    1  0 0 0 0 0 0 0 0    1  1 1 1 1 1 1 1 1
+
+
+
+                            ALL TOGETHER
+
+                        8  ♜ ♞ ♝ ♛ ♚ ♝ ♞ ♜
+                        7  ♟︎ ♟︎ ♟︎ ♟︎ ♟︎ ♟︎ ♟︎ ♟︎
+                        6  . . . . . . . .
+                        5  . . . . . . . .
+                        4  . . . . . . . .
+                        3  . . . . . . . .
+                        2  ♙ ♙ ♙ ♙ ♙ ♙ ♙ ♙
+                        1  ♖ ♘ ♗ ♕ ♔ ♗ ♘ ♖
+
+                           a b c d e f g h
+
+*/
+
+
+// castling rights binary encoding
+
+/*
+
+    bin  dec
+    
+   0001    1  white king can castle to the king side
+   0010    2  white king can castle to the queen side
+   0100    4  black king can castle to the king side
+   1000    8  black king can castle to the queen side
+
+   examples
+
+   1111       both sides an castle both directions
+   1001       black king => queen side
+              white king => king side
+
+*/
+
+//casteling enumeration
+enum {wk = 1, wq = 2, bk = 4, bq = 8};
+
+// encode pieces
+enum {P, N, B, R, Q, K, p, n, b, r, q, k};
+
+
+// ASCII pieces
+char ascii_pieces[12] = "PNBRQKpnbrqk";
+
+// unicode pieces
+char *unicode_pieces[12] = {"♟︎","♞","♝","♜","♛","♚","♙","♘","♗","♖","♕","♔"};
+
+// convert ascii pieces character to encoded contants
+int char_pieces[] = {
+['P'] = P,
+['N'] = N,
+['B'] = B,
+['R'] = R,
+['Q'] = Q,
+['K'] = K,
+['p'] = P,
+['n'] = n,
+['b'] = b,
+['r'] = r,
+['q'] = q,
+['k'] = k};
+
+// piece bitboards
+U64 bitboards[12];
+
+// occupancies bitboards;
+U64 occupancies[3];
+
+// side to move
+int side = -1;
+
+// enpassant square;
+int enpassant= no_sq;
+
+// castling rights
+int castle;
+
 
 
 
@@ -261,9 +431,9 @@ U64 generate_magic_number(){
 // bit macros
 
 // set/get/pop
-#define set_bit(bitboard, square) ((bitboard) |= (1ULL << (square)));
-#define get_bit(bitboard, square) ((bitboard) & (1ULL << (square)));
-#define pop_bit(bitboard, square) ((bitboard) &= ~(1ULL << (square)));
+#define set_bit(bitboard, square) ((bitboard) |= (1ULL << (square)))
+#define get_bit(bitboard, square) ((bitboard) & (1ULL << (square)))
+#define pop_bit(bitboard, square) ((bitboard) &= ~(1ULL << (square)))
 
 // count bits within a bitboard
 // to-do: find a better implementation of counting bits,
@@ -332,6 +502,59 @@ void print_bitboard(U64 bitboard){
     printf("    Bitboard: %llud\n\n", bitboard);
 }
 
+void print_board(){
+    for (int rank = 0; rank<8; rank++){
+
+        for ( int file = 0; file < 8; file ++){
+
+            int square = rank * 8 + file;
+            if (!file)
+            printf(" %d", 8-rank);
+            // define piece variable
+            int piece = -1;
+
+            // loop over all bitboards and ask if there is a bit over this square or not
+            for (int bb_piece = P; bb_piece <= k; bb_piece++){
+                if (get_bit(bitboards[bb_piece], square))
+                    piece = bb_piece;
+            }
+
+            // print different piece set depending on operating system
+            #ifdef WIN64
+            printf(" %c", (piece == -1) ? '.' : ascii_pieces[piece]);
+            #else
+            printf(" %s", (piece == -1) ? '.' : unicode_pieces[piece]);
+            #endif
+            // print chess board
+        }
+        // print new line every rank
+        printf("\n");
+        
+    }
+    printf("\n    a b c d e f g h\n\n");
+
+    printf("    Side:      %s\n", (!side) ? "w" : "b" );
+    printf("    Enpassant: %s\n", (enpassant != no_sq) ? square_to_coordinates[enpassant] : "no");
+    printf("    Casteling: %c%c%c%c\n\n", (castle & wk) ? 'K': '-',
+                                            (castle & wq) ? 'Q': '-',
+                                            (castle & bk) ? 'k': '-',
+                                            (castle & bq) ? 'q': '-');
+
+}
+
+
+void parse_fen(char* fen){
+
+    // reset board position (bitboards)
+    memset(bitboards, 0ULL, sizeof(bitboards));
+
+    // resent occupancies (bitboards)
+    memset(occupancies, 0ULL, sizeof(occupancies));
+    side = 0;
+
+
+
+}
 
 /******************************\
 ================================
@@ -848,16 +1071,61 @@ void init_all(){
 
 int main(){
     init_all();
-
-    // define test bitboard
-    U64 occupancy = 0ULL;
-
-    set_bit(occupancy, e7);
-    set_bit(occupancy, e2);
-    set_bit(occupancy, g5);
-    set_bit(occupancy, b5);
-    print_bitboard(occupancy);
-    print_bitboard(get_rook_attacks(e5, occupancy));
     
+    // set white pawn on e2
+    set_bit(bitboards[P], e2);
+    set_bit(bitboards[P], c2);
+    set_bit(bitboards[P], b2);
+    set_bit(bitboards[P], d2);
+    set_bit(bitboards[P], f2);
+    set_bit(bitboards[P], h2);
+    set_bit(bitboards[P], g2);
+    set_bit(bitboards[P], a2);
+
+    set_bit(bitboards[N], g1);
+    set_bit(bitboards[N], b1);
+
+    set_bit(bitboards[R], a1);
+    set_bit(bitboards[R], h1);
+
+    set_bit(bitboards[B], c1);
+    set_bit(bitboards[B], f1);
+
+    set_bit(bitboards[Q], d1);
+    set_bit(bitboards[K], e1);
+
+
+    set_bit(bitboards[p], e7);
+    set_bit(bitboards[p], c7);
+    set_bit(bitboards[p], b7);
+    set_bit(bitboards[p], d7);
+    set_bit(bitboards[p], f7);
+    set_bit(bitboards[p], h7);
+    set_bit(bitboards[p], g7);
+    set_bit(bitboards[p], a7);
+
+    set_bit(bitboards[n], g8);
+    set_bit(bitboards[n], b8);
+
+    set_bit(bitboards[r], a8);
+    set_bit(bitboards[r], h8);
+
+    set_bit(bitboards[b], c8);
+    set_bit(bitboards[b], f8);
+
+    set_bit(bitboards[q], d8);
+    set_bit(bitboards[k], e8);
+
+    side = white;
+    enpassant = e3;
+    castle |= wk;
+    castle |= wq;
+    castle |= bk;
+    castle |= bq;
+    // print chess board
+
+    print_board();
+
+    getchar();
     return 0;
 }

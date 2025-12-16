@@ -1,0 +1,63 @@
+# Python
+# Byte-code files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so # Shared libraries/C extensions, often compiled from C source
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# Distribution / packaging
+.Python
+build/
+dist/
+wheels/
+*.egg-info/
+
+# IDE-specific files (popular editors)
+.idea/ # PyCharm
+.vscode/ # VS Code
+*.swp # Vim
+*.sublime-project
+*.sublime-workspace
+
+# OS-specific files
+.DS_Store # macOS
+Thumbs.db # Windows
+
+# C/C++
+# Compiled object files
+*.o
+*.obj
+
+# Executables and Libraries
+*.exe
+*.out
+*.app
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+
+# Precompiled headers
+*.gch
+*.pch
+
+# Build directories/files
+cmake-build-*/
+Makefile.local
+[Mm]akefile.orig
+
+# Miscellaneous
+# Log files, data files, etc.
+*.log
+*.temp
+*.tmp
+secrets.txt # Example of sensitive data
+.env # Environment variables/secrets
