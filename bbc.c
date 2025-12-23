@@ -1,6 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef WIN64
+    #include <windows.h>
+#else
+    #include <sys/time.h>
+#endif
+
+
 #define U64 unsigned long long
 
 // sides to move (colors)
@@ -480,39 +488,41 @@ U64 generate_magic_number(){
 #define get_bit(bitboard, square) ((bitboard) & (1ULL << (square)))
 #define pop_bit(bitboard, square) ((bitboard) &= ~(1ULL << (square)))
 
+
 // count bits within a bitboard
 // to-do: find a better implementation of counting bits,
 // some engines have bmi versions of it, they make use of hardware bit manipulation instructions in a hardware level
-static inline int count_bits(U64 bitboard){
-
-    // bit counter
-
-    int count = 0;
-    // return bit count
-
-    while (bitboard)
-    {
-        // increment count
-        count ++;
-
-        // increment count
-        bitboard &= bitboard -1;
-    }
-
-    return count;
-}
-
-// get least significant 1st bit index
-
-static inline int get_ls1b_index(U64 bitboard){
+// MSVC (Windows)
+#ifdef _MSC_VER
+    #include <intrin.h>
     
-    // make sure bitboard is not zero
-    if (bitboard){
-        // count trailing bis before LS1B
-        return count_bits((bitboard & -bitboard) - 1);
+    static inline int count_bits(U64 bitboard) {
+        return (int)__popcnt64(bitboard);
     }
-    else return -1;
-}
+
+    static inline int get_ls1b_index(U64 bitboard) {
+        unsigned long index;
+        // _BitScanForward64 returns 0 if mask is zero, non-zero otherwise
+        if (_BitScanForward64(&index, bitboard)) {
+            return (int)index;
+        }
+        return -1;
+    }
+
+// GCC / Clang (Linux, Mac, MinGW)
+#else
+    static inline int count_bits(U64 bitboard) {
+        return __builtin_popcountll(bitboard);
+    }
+
+    static inline int get_ls1b_index(U64 bitboard) {
+        if (bitboard) {
+            // __builtin_ctzll = Count Trailing Zeros
+            return __builtin_ctzll(bitboard);
+        }
+        return -1;
+    }
+#endif
 
 /******************************\
 ================================
@@ -1166,6 +1176,7 @@ void init_sliders_attacks(int bishob){
 
 
 }
+
 static inline U64 get_bishob_attacks(int square, U64 occupancy){
     // get bishob attacks assuming current board occupancy
     occupancy &= bishob_masks[square];
@@ -1176,6 +1187,7 @@ static inline U64 get_bishob_attacks(int square, U64 occupancy){
 
     return bishob_attacks[square][occupancy];
 }
+
 static inline U64 get_rook_attacks(int square, U64 occupancy){
     // get rook attacks assuming current board occupancy
     occupancy &= rook_masks[square];
@@ -1218,10 +1230,9 @@ static inline U64 get_queen_attacks(int square, U64 occupancy){
 // }
 
 
-
 /******************************\
 ================================
-        init all
+            init all
 ================================
 \******************************/
 void init_all(){
@@ -1390,6 +1401,20 @@ static inline int make_move(int move, int move_flag){
         // move piece
         pop_bit(bitboards[piece], source_square);
         set_bit(bitboards[piece], target_square);
+        
+
+        //updating occupancies
+        pop_bit(occupancies[side], source_square);
+        set_bit(occupancies[side], target_square);
+
+        pop_bit(occupancies[both], source_square);
+        set_bit(occupancies[both], target_square);
+
+        // if there is an occupancies on the target square on the other side
+        if (get_bit(occupancies[(side == white ? black: white)], target_square)){
+            pop_bit(occupancies[(side == white ? black: white)], target_square);
+        }
+
 
         // handling capture moves
         if (capture){
@@ -1428,7 +1453,18 @@ static inline int make_move(int move, int move_flag){
         // handle enpassant captures
         if (enpass){
             // erase the pawn depeding on side to move
-            (side == white) ? pop_bit(bitboards[p], target_square + 8) : pop_bit(bitboards[P], target_square-8);
+            if (side == white){
+                pop_bit(bitboards[p], target_square + 8);
+                pop_bit(occupancies[black], target_square + 8);
+                pop_bit(occupancies[both], target_square + 8);
+
+            }
+            else{
+                pop_bit(bitboards[P], target_square - 8);
+                pop_bit(occupancies[white], target_square - 8);
+                pop_bit(occupancies[both], target_square - 8);
+
+            }
 
         }
         // reset enpassant square
@@ -1446,32 +1482,111 @@ static inline int make_move(int move, int move_flag){
                     // move H rook
                     pop_bit(bitboards[R], h1);
                     set_bit(bitboards[R], f1);
+
+                    // move the rook in the occupancies for white and both
+                    pop_bit(occupancies[white], h1);
+                    set_bit(occupancies[white], f1);
+
+                    pop_bit(occupancies[both], h1);
+                    set_bit(occupancies[both], f1);
+
+
                     break;
                 
                 // white castle queen side
                 case (c1):
-                    // move a rook
+                    // move a-file rook
                     pop_bit(bitboards[R], a1);
                     set_bit(bitboards[R], d1);
+                    // move the rook in the occupancies of white
+                    pop_bit(occupancies[white], a1);
+                    set_bit(occupancies[white], d1);
+                    // move the rook in the occupancies of both
+                    pop_bit(occupancies[both], a1);
+                    set_bit(occupancies[both], d1);
                     break;
                 // black castle king side
                 case (g8):
                     // move H rook
                     pop_bit(bitboards[r], h8);
                     set_bit(bitboards[r], f8);
+                    // move the rook in the occupancies of black
+                    pop_bit(occupancies[black], h8);
+                    set_bit(occupancies[black], f8);
+                    // move the rook in the occupancies of both
+                    pop_bit(occupancies[both], h8);
+                    set_bit(occupancies[both], f8);
                     break;
 
                 // black castle queen side
                 case (c8):
-                    // move H rook
+                    // move a8 rook
                     pop_bit(bitboards[r], a8);
                     set_bit(bitboards[r], d8);
+                    // move the rook in the occupancies of black
+                    pop_bit(occupancies[black], a8);
+                    set_bit(occupancies[black], d8);
+                    // move the rook in the occupancies of both
+                    pop_bit(occupancies[both], a8);
+                    set_bit(occupancies[both], d8);
                     break;
             }
         }
     // update castling rights
     castle &= castling_rights[source_square];
     castle &= castling_rights[target_square];
+    
+    // todo : I think updating the occupancies could be made more efficiently
+    // we can create a macro that toggles both the bitboards[piece] and occupancies
+    // reset occupancies
+    // memset(occupancies, 0ULL, 24);
+    // // loop over white pieces bitboards
+    // for (int bb_piece = P; bb_piece <=K; bb_piece++)
+    // occupancies[white] |= bitboards[bb_piece];
+
+    // for (int bb_piece = b; bb_piece <=k; bb_piece++)
+    // occupancies[black] |= bitboards[bb_piece];
+
+    // // update both sides occupancies
+    // occupancies[both] |= occupancies[white];
+    // occupancies[both] |= occupancies[black];
+    
+    // change side
+    side ^= 1;
+
+    // make sure that king has not been exposed into a check
+    if (is_square_attacked((side == white)? get_ls1b_index(bitboards[k]): get_ls1b_index(bitboards[K]), side))
+        {// move is illegal, hence take it back
+        take_back();
+        // return illegal move
+        return 0;
+        }
+    else return 1;
+
+    // test occupancies
+    U64 test_occupancies[3] = {0ULL, 0ULL, 0ULL};
+
+    for (int bb_piece = P; bb_piece <=K; bb_piece++)
+    test_occupancies[white] |= bitboards[bb_piece];
+
+    for (int bb_piece = p; bb_piece <=k; bb_piece++)
+    test_occupancies[black] |= bitboards[bb_piece];
+
+
+    test_occupancies[both] |= test_occupancies[white];
+    test_occupancies[both] |= test_occupancies[black];
+
+    // update both sides occupancies
+
+    
+    if (test_occupancies[white] != occupancies[white]) printf("WARING: test failed in white occupancies\n");
+    else printf("PASSED: test for white occupancies\n");
+
+    if (test_occupancies[black] != occupancies[black]) printf("WARING: test failed in black occupancies\n");
+    else printf("PASSED: test for black occupancies\n");
+    
+    if (test_occupancies[both] != occupancies[both]) printf("WARING: test failed in both occupancies\n");
+    else printf("PASSED: test for both occupancies\n");
 
     }   
     // capture moves
@@ -1482,6 +1597,7 @@ static inline int make_move(int move, int move_flag){
         else
             // don't make it
             return 0;
+
     }
 
 }
@@ -1580,12 +1696,12 @@ static inline void generate_moves(moves *move_list){
             //castling moves
             if (piece == K){
                 // king side castling is avaliable
-                
+
                 if (castle & wk){
                     // make sure square between king and king's rook are empty
                     if (!get_bit(occupancies[both], f1) && !get_bit(occupancies[both], g1)){
-
-                        if (!is_square_attacked(f1, black) && !is_square_attacked(g1, black))
+                        
+                        if (!is_square_attacked(e1, black) && !is_square_attacked(f1, black))
                             add_move(move_list, encode_move(e1, g1, piece, 0, 0, 0, 0, 1));
                     }
 
@@ -1594,8 +1710,8 @@ static inline void generate_moves(moves *move_list){
                 if (castle & wq){
                     // make sure square between king and king's rook are empty
                     if (!get_bit(occupancies[both], d1) && !get_bit(occupancies[both], c1) && !get_bit(occupancies[both], b1)){
+                        if (!is_square_attacked(e1, black) && !is_square_attacked(d1, black))
 
-                        if (!is_square_attacked(d1, black) && !is_square_attacked(c1, black) && !is_square_attacked(b1, black))
                             add_move(move_list, encode_move(e1, c1, piece, 0, 0, 0, 0, 1));
                 }       }
             }
@@ -1685,7 +1801,7 @@ static inline void generate_moves(moves *move_list){
                     // make sure square between king and king's rook are empty
                     if (!get_bit(occupancies[both], f8) && !get_bit(occupancies[both], g8)){
 
-                        if (!is_square_attacked(f8, white) && !is_square_attacked(g8, white))
+                        if (!is_square_attacked(e8, white) && !is_square_attacked(f8, white))
                             add_move(move_list, encode_move(e8, g8, piece, 0, 0, 0, 0, 1));
                         
                     }
@@ -1696,7 +1812,7 @@ static inline void generate_moves(moves *move_list){
                     // make sure square between king and king's rook are empty
                     if (!get_bit(occupancies[both], d8) && !get_bit(occupancies[both], c8) && !get_bit(occupancies[both], b8)){
 
-                        if (!is_square_attacked(d8, white) && !is_square_attacked(c8, white) && !is_square_attacked(b8, white))
+                        if (!is_square_attacked(e8, white) && !is_square_attacked(d8, white) && !is_square_attacked(c8, white))
                             add_move(move_list, encode_move(e8, c8, piece, 0, 0, 0, 0, 1));                        
                     }
 
@@ -1832,7 +1948,7 @@ static inline void generate_moves(moves *move_list){
             while (bitboard){
                 source_square = get_ls1b_index(bitboard);
                 // init piece attacks in order to get set of target squares
-                attacks = king_attacks[source_square] & ((side == white) ? ~occupancies[white] : ~occupancies[black]);;
+                attacks = king_attacks[source_square] & ((side == white) ? ~occupancies[white] : ~occupancies[black]);
 
                 while (attacks){
                     target_square = get_ls1b_index(attacks);
@@ -1890,32 +2006,182 @@ void print_attacked_squares(int side){
 ================================
 \******************************/
 
+int get_time_ms(){
+    #ifdef WIN64
+        return GetTickCount();
+    #else
+        struct timeeval time_value;
+        gettimeofday(&time_value, NULL);
+        return time_value.tv_sec * 1000 + time_value.tv_usec / 1000;
+    #endif
 
-
-int main(){
+}
+int test_suit(char * test_fen){
     init_all();
-    // parse fen
-    parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R b KQkq - 0 1 ");
-    print_board();
+    parse_fen(test_fen);
     moves move_list[1];
 
     //generate moves list
     generate_moves(move_list);
-
+    int test_count = 0;
 
     for (int move_count = 0; move_count < move_list->count; move_count++){
         int move = move_list->moves[move_count];
         copy_board();
 
-        make_move(move,all_moves);
-        print_board();
-        getchar();
+        if (!make_move(move,all_moves))
+            continue;
+        // print_board();
+        // getchar();
+        test_count ++;
         take_back();
-        print_board();
-        getchar();
-    }
-    // // print move list
-    // print_move_list(move_list);
+        // print_board();
+        // getchar();
 
+    }
+    return test_count;
+}
+
+// leaf nodes (number of position reached during the test of the move generator at a given depth)
+long nodes = 0;
+// perft driver
+
+static inline void perft_driver(int depth){
+
+    // recursion escape condition
+    if (depth == 0){
+        // increment nodes count (count reached positions)
+        nodes++;
+        return;
+    }
+    moves move_list[1];
+    //generate moves list
+    generate_moves(move_list);
+
+    for (int move_count = 0; move_count < move_list->count; move_count++){
+        int move = move_list->moves[move_count];
+        copy_board();
+        if (!make_move(move,all_moves))
+            continue;
+
+        // call perft driver recursivly
+        perft_driver(depth - 1);
+        take_back();
+
+    }
+
+}
+
+void perft_test(int depth){
+    printf("    Performance Test \n\n");
+    moves move_list[1];
+    //generate moves list
+    generate_moves(move_list);
+
+    // initialize start time
+    long start_time = get_time_ms();
+    for (int move_count = 0; move_count < move_list->count; move_count++){
+        int move = move_list->moves[move_count];
+        copy_board();
+        if (!make_move(move,all_moves))
+            continue;
+
+        long cumulative_nodes = nodes;
+        perft_driver(depth - 1);
+        long old_nodes = nodes - cumulative_nodes;
+        // call perft driver recursivly
+        printf("    move: %s%s%c  nodes: %ld \n", 
+                        square_to_coordinates[get_move_source(move)],
+                        square_to_coordinates[get_move_target(move)],
+                        promoted_pieces[get_move_promoted(move)]
+                        , old_nodes);
+        take_back();
+
+        }
+
+        //print results summary
+        printf("\n    Depth: %d\n", depth);
+        printf("    Nodes: %d\n", nodes);
+        printf("    Time:  %ldms\n", get_time_ms()-start_time);
+}
+
+/******************************\
+================================
+              UCI
+================================
+\******************************/
+
+// parse user GUI move string input(e.g., "e7e8q")
+
+int parse_move(char * move_string){
+    // create move list instance
+    moves move_list[1];
+
+    // generate moves
+    generate_moves(move_list);
+
+    // parse source square
+    int source_square = (move_string[0] - 'a') + (8-(move_string[1] - '0'))*8;
+    
+    // parse target square
+    int target_square = (move_string[2] - 'a') + (8-(move_string[3]- '0'))*8;
+
+    // define promoted piece
+    int promoted_piece = 0;
+
+    for (int move_count = 0; move_count < move_list->count; move_count++){
+        int move = move_list->moves[move_count];
+
+        // make sure source and target squares are available in the generated moves
+        if (source_square == get_move_source(move) && target_square == get_move_target(move)){
+            // initialize promoted piece
+            int promoted_piece = get_move_promoted(move);
+            
+            // in case promoted piece is available
+            if (promoted_piece){
+                // return legal move in case of promotion
+                if ((promoted_piece == Q || promoted_piece == q) && move_string[4] == 'q')
+                    // return legal move
+                    return move;
+                else if ((promoted_piece == R || promoted_piece == r) && move_string[4] == 'r')
+                    // return legal move
+                    return move;
+                else if ((promoted_piece == B || promoted_piece == b) && move_string[4] == 'b')
+                    // return legal move
+                    return move;
+                else if ((promoted_piece == N || promoted_piece == n) && move_string[4] == 'n')
+                    // return legal move
+                    return move;
+                
+                // continue the loop on possible wrong promotion characters (e.g. "e7e8f")
+                continue;
+            }
+            else
+            return move;
+
+
+        }
+    }
+    printf("source square: %s, %s, %s \n", move_string, square_to_coordinates[source_square], square_to_coordinates[target_square]);
+    
+    // return illegal move
+    return 0;
+}
+
+
+int main(){
+    init_all();
+    parse_fen(start_position);
+    print_board();
+
+    //parse movestring
+    int move = parse_move("e2e4");
+
+    if (move){
+        make_move(move, all_moves);
+    }
+    else printf("illegal move \n");
+
+    print_board();
     return 0;
 }
