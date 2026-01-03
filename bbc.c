@@ -532,8 +532,7 @@ U64 generate_magic_number(){
 //print bitboard
 void print_bitboard(U64 bitboard){
     // loop over board ranks
-
-
+    
     for (int rank = 0; rank < 8; rank ++){
         // loop over board files
         printf("\n");
@@ -1253,7 +1252,8 @@ static inline int is_square_attacked(int square, int side){
 
 
 /* 
-    binary move bits representation                     hexa_decimal      
+NOTE : we are using only 24 bits, we can encode more information to the int
+    binary move bits representation                   hexa_decimal      
     0000 0000 0000 0000 0011 1111   source square       0x3f
     0000 0000 0000 1111 1100 0000   target square       0xfC0
     0000 0000 1111 0000 0000 0000   piece               0xf000
@@ -2259,14 +2259,172 @@ static inline int evaluate(){
 ================================
 \******************************/
 
+// most valuable victim & less valuable attacher
+
+/*
+                          
+    (Victims) Pawn Knight Bishop   Rook  Queen   King
+  (Attackers)
+        Pawn   105    205    305    405    505    605
+      Knight   104    204    304    404    504    604
+      Bishop   103    203    303    403    503    603
+        Rook   102    202    302    402    502    602
+       Queen   101    201    301    401    501    601
+        King   100    200    300    400    500    600
+
+*/
+
+// MVV LVA [attacker][victim]
+static int mvv_lva[12][12] = {
+ 	105, 205, 305, 405, 505, 605,  105, 205, 305, 405, 505, 605,
+	104, 204, 304, 404, 504, 604,  104, 204, 304, 404, 504, 604,
+	103, 203, 303, 403, 503, 603,  103, 203, 303, 403, 503, 603,
+	102, 202, 302, 402, 502, 602,  102, 202, 302, 402, 502, 602,
+	101, 201, 301, 401, 501, 601,  101, 201, 301, 401, 501, 601,
+	100, 200, 300, 400, 500, 600,  100, 200, 300, 400, 500, 600,
+
+	105, 205, 305, 405, 505, 605,  105, 205, 305, 405, 505, 605,
+	104, 204, 304, 404, 504, 604,  104, 204, 304, 404, 504, 604,
+	103, 203, 303, 403, 503, 603,  103, 203, 303, 403, 503, 603,
+	102, 202, 302, 402, 502, 602,  102, 202, 302, 402, 502, 602,
+	101, 201, 301, 401, 501, 601,  101, 201, 301, 401, 501, 601,
+	100, 200, 300, 400, 500, 600,  100, 200, 300, 400, 500, 600
+};
+
+
+// max ply that we can reach within a search
+#define max_ply 64
+
+// killer moves [id][ply]
+// https://www.chessprogramming.org/Killer_Move
+int killer_moves[2][max_ply];
+
+
+
+// history moves [piece][square]
+int history_moves[12][64];
 
 // half move counter
 int ply;
 
-// best move
-int best_move;
+
+
+
+/*
+      ================================
+            Triangular PV table
+      --------------------------------
+        PV line: e2e4 e7e5 g1f3 b8c6
+      ================================
+
+           0    1    2    3    4    5
+      
+      0    m1   m2   m3   m4   m5   m6
+      
+      1    0    m2   m3   m4   m5   m6 
+      
+      2    0    0    m3   m4   m5   m6
+      
+      3    0    0    0    m4   m5   m6
+       
+      4    0    0    0    0    m5   m6
+      
+      5    0    0    0    0    0    m6
+*/
+
+// PV length
+int pv_length[max_ply];
+
+// PV table [ply][ply]
+int pv_table[max_ply][max_ply];
+
+// half move counter
+int ply;
+
+
+// score moves for move ordering
+static inline int score_move(int move){
+
+    // todo IMPORTANT // to-do: you can optimize this part by encoding the target piece to the move U64 int
+
+    // score caputre move
+    if (get_move_capture(move)){
+
+        // initialize to a pawn, in case of enpassant capture, there will be no piece on this square, so it will always be a pawn, it does not matter if it is a black pawn or a white pawn, the lookup table will return the same value
+        int target_piece = p;
+
+        int target_square = get_move_target(move);
+        // pick up bitboard piece index depending on side
+        int start_piece , end_piece;
+
+        // white to move
+        if (side == white){ start_piece = p; end_piece = k;}
+        else{ start_piece = P; end_piece = K;}
+
+        // loop over bitboards oppiste to the current side to move
+        for (int bb_piece = start_piece; bb_piece <= end_piece; bb_piece++){
+            if (get_bit(bitboards[bb_piece], target_square)){
+                target_piece = bb_piece;
+                break;
+            }
+        }
+
+        // score move by MVV LVA lookup [source piece][target piece]
+        
+        // printf("source piece: %c \n", ascii_pieces[get_move_piece(move)]);
+        // printf("target piece: %c \n\n", ascii_pieces[target_piece]);
+        return mvv_lva[get_move_piece(move)][target_piece] + 10000;
+    }
+    // score quiet move
+    else{
+        // score 1st killer move
+        if (killer_moves[0][ply] == move)
+            return 9000;
+        // score 2nd killer move
+        else if (killer_moves[1][ply] == move)
+            return 8000;
+        
+        // score history move
+        else
+            return history_moves[get_move_piece(move)][get_move_target(move)];
+    }
+    return 0;
+}
+
+/***************\
+    Sorting 
+\***************/
+
+// TODO: you can implement a function called get_best_move, instead of sorting the entire array, you can just make a single pass to the moves and get the maximum score at each move order, 
+// Insertion sort - best for small lists and partially ordered data
+// Sorts moves in descending order by score (highest score first)
+void sort_moves(moves* move_list, int count) {
+    int i, j;
+    int temp_move;
+    int temp_score;
+    
+    for (i = 1; i < count; i++) {
+        temp_move = move_list->moves[i];
+        temp_score = score_move(temp_move);
+        j = i - 1;
+        
+        // Shift elements that are smaller than temp_score to the right
+        while (j >= 0 && score_move(move_list->moves[j]) < temp_score) {
+            move_list->moves[j + 1] = move_list->moves[j];
+            j--;
+        }
+        
+        move_list->moves[j + 1] = temp_move;
+    }
+}
+
 
 static inline int quiescense (int alpha, int beta){
+    
+    // incrementnodes count
+    nodes++;
+
+    
     // evaluate position
     int evaluation = evaluate();
     // fail hard beta cutoff 1- fail hard frame work, score cant be outside of alpha beta bounds 2- fail soft
@@ -2288,6 +2446,7 @@ static inline int quiescense (int alpha, int beta){
     // generate moves
     generate_moves(move_list);
 
+    sort_moves(move_list, move_list->count);
     // loop over moves within a movelist
 
     for (int count = 0; count<move_list->count; count++){
@@ -2335,6 +2494,9 @@ static inline int quiescense (int alpha, int beta){
 }
 // negamax alpha beta
 static inline int negamax(int alpha, int beta, int depth){
+    // init PV length
+    pv_length[ply] = ply;
+
     // recursive escapre condition
     if (depth == 0){
         return quiescense(alpha, beta);
@@ -2342,14 +2504,23 @@ static inline int negamax(int alpha, int beta, int depth){
     // increment nodes count
     nodes++;
 
+    //we are too deep hence there's an overflow of array relying on max ply constant
+    if (ply > max_ply - 1){
+        // evaluate position
+        return evaluate();
+    }
+
+
     // is king in check
     int in_check = is_square_attacked((side == white) ? get_ls1b_index(bitboards[K]):  get_ls1b_index(bitboards[k]), side ^ 1);
+    
+    // increase search depth if the king has been exposed into a check
+    if (in_check) depth++;
+
 
     // legal moves counter
     int legal_moves = 0;
 
-    // best move so far
-    int best_sofar;
 
     // old value of alpha
     int old_alpha = alpha;
@@ -2360,6 +2531,8 @@ static inline int negamax(int alpha, int beta, int depth){
     // generate moves
     generate_moves(move_list);
 
+    // sort moves
+    sort_moves(move_list, move_list->count);
     // loop over moves within a movelist
 
     for (int count = 0; count<move_list->count; count++){
@@ -2392,21 +2565,36 @@ static inline int negamax(int alpha, int beta, int depth){
 
         // fail hard beta cutoff 1- fail hard frame work, score cant be outside of alpha beta bounds 2- fail soft
         if (score >= beta){
+
+            if (!get_move_capture(move_list->moves[count])){
+            //store killer moves
+            killer_moves[1][ply] = killer_moves[0][ply];
+            killer_moves[0][ply] = move_list->moves[count];
+            }
             // nodes fails high
             return beta;
         }
 
         // found a better move
         if (score > alpha){
+            //store history moves
+            history_moves[get_move_piece(move_list->moves[count])][get_move_target(move_list->moves[count])] += depth;
 
             // PV node (move) 
             alpha = score;
+            
+            // write PV move
+            pv_table[ply][ply] = move_list->moves[count];
 
-            // if root move
-            if (ply == 0){
-                // associate best move with the best score
-                best_sofar = move_list->moves[count];
+            for (int next_ply = ply + 1; next_ply <pv_length[ply + 1]; next_ply++){
+                // copy move from deeper ply into a current ply's line
+                pv_table[ply][next_ply] = pv_table[ply + 1][next_ply];
             }
+            // adjust PV length
+            pv_length[ply] = pv_length[ply + 1];
+
+
+
 
         }
     }
@@ -2425,9 +2613,6 @@ static inline int negamax(int alpha, int beta, int depth){
             return 0; // draw score
     }
 
-    if (old_alpha != alpha)
-        // init best move
-        best_move = best_sofar;
     // node (move) fails low
     return alpha;
 
@@ -2436,21 +2621,41 @@ static inline int negamax(int alpha, int beta, int depth){
 
 // search position for the best move
 void search_position(int depth){
+    int score = 0;
+    // reset nodes counter
+    nodes = 0;
+    // clear helper data structure
+    memset(killer_moves, 0, sizeof(killer_moves));
+    memset(history_moves, 0, sizeof(history_moves));
+    memset(pv_length, 0, sizeof(pv_length));
+    memset(pv_table, 0, sizeof(pv_table));
 
-    best_move = 0;  // Initialize to 0
-    nodes = 0;      // Also reset nodes counter
-    ply = 0;        // Reset ply counter
+    for (int current_depth = 1; current_depth <= depth; current_depth++){
+        
+        // best move placeholder
+        // find best move within a given position
+        score = negamax(-50000, 50000, depth);
+        printf("info score cp %d depth %d nodes %ld pv ", score, current_depth, nodes);
+        // loop over the moves a PV line
+        for (int count = 0; count < pv_length[0]; count++){
+            // print pv move
+            print_move(pv_table[0][count]);
+            printf(" ");
 
-    // best move placeholder
-    // find best move within a given position
-    int score = negamax(-50000, 50000, depth);
-    if (best_move){
-        printf("info score cp %d depth %d nodes %ld\n", score, depth, nodes);
-        printf("bestmove ");
-        print_move(best_move);
-        printf("\n");}
+            }
+        printf("\n");
+
+    }
+
+    
+    printf("bestmove ");
+    print_move(pv_table[0][0]);
+    printf("\n");
+
 
 }
+
+
 
 /******************************\
 ===========================i=====
@@ -2681,8 +2886,7 @@ void uci_loop()
         // parse UCI "uci" input
         else if (strncmp(input, "uci", 3) == 0){
             // print engine info
-            printf("id name BBC\n");
-            printf("id name Amanies\n");
+            printf("id name MoriphiesHead\n");
             printf("uciok\n");
         }
 
@@ -2691,14 +2895,23 @@ void uci_loop()
 
         //parse UCI "quit" input
         else if (strncmp(input, "quit", 4) == 0) break;
-
-
-
-
     }
 
 }
 
+
+void print_move_score(moves* move_list){
+        printf("    Move Scores:\n\n");
+
+        for (int count = 0; count < move_list->count; count++){
+            printf("    move: ");
+            print_move(move_list->moves[count]);
+            printf(" score: %d\n", score_move(move_list->moves[count]));
+            
+        }
+
+
+}
 
 /******************************\
 ================================
@@ -2718,16 +2931,34 @@ int main(){
     init_all();
 
     // debug variable mode
-    int debug = 0;
+    int debug = 1;
 
     // if debug mode
     if(debug){
-        parse_fen(start_position);
+        parse_fen(tricky_position);
         print_board();
+        
+        
+        moves move_list[1];
+        generate_moves(move_list);
         search_position(6);
+        // print_move_score(move_list);
+
+        // // test killer moves
+        // killer_moves[0][ply] = move_list->moves[3];
+        // killer_moves[1][ply] = move_list->moves[2];
+
+        // // test history moves
+        // history_moves[get_move_piece(move_list->moves[0])][get_move_target(move_list->moves[0])] = 35;
+
+        // sort_moves(move_list, move_list->count);
+
+        // print_move_score(move_list);
+
+
     }
     else
-    uci_loop();
+        uci_loop();
 
 
 
