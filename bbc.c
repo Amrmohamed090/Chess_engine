@@ -1176,26 +1176,16 @@ void init_sliders_attacks(int bishob){
 
 }
 
+// Fancy magic bitboards - no masking required
 static inline U64 get_bishob_attacks(int square, U64 occupancy){
-    // get bishob attacks assuming current board occupancy
-    occupancy &= bishob_masks[square];
-    occupancy *= bishob_magic_numbers[square];
-    occupancy >>= 64 - bishob_relevant_bits[square];
-
-    // return bishob attacks
-
-    return bishob_attacks[square][occupancy];
+    // get bishob attacks assuming current board occupancy (fancy magic)
+    return bishob_attacks[square][((occupancy & bishob_masks[square]) * bishob_magic_numbers[square]) >> (64 - bishob_relevant_bits[square])];
 }
 
+// Fancy magic bitboards - no masking required
 static inline U64 get_rook_attacks(int square, U64 occupancy){
-    // get rook attacks assuming current board occupancy
-    occupancy &= rook_masks[square];
-    occupancy *= rook_magic_numbers[square];
-    occupancy >>= 64 - rook_relevant_bits[square];
-    // return rook attacks
-
-    return rook_attacks[square][occupancy];
-
+    // get rook attacks assuming current board occupancy (fancy magic)
+    return rook_attacks[square][((occupancy & rook_masks[square]) * rook_magic_numbers[square]) >> (64 - rook_relevant_bits[square])];
 }
 
 static inline U64 get_queen_attacks(int square, U64 occupancy){
@@ -2337,14 +2327,47 @@ int pv_length[max_ply];
 
 // PV table [ply][ply]
 int pv_table[max_ply][max_ply];
+// follow pv = 1: we follow the principle variation from previous iterative deepinging pass, pv=0 we do not follow it
+int follow_pv, score_pv;
 
 // half move counter
 int ply;
 
 
+//enable pv scoring
+static inline void enable_pv_scoring(moves* move_list){
+    // disable following pv
+    follow_pv = 0;
+    // loop over the moves within a move list
+    for (int count = 0; count < move_list->count; count++){
+
+        // make sure we hit PV move
+        if (pv_table[0][ply] == move_list->moves[count]){
+            // enable move scoring
+            score_pv = 1;
+
+            // enable following pv 
+            follow_pv = 1;
+        }
+    }
+}
+
 // score moves for move ordering
 static inline int score_move(int move){
 
+
+    // if pv move scoring is allowed
+
+    if (score_pv){
+        if (pv_table[0][ply] == move){
+
+            // disable score PV flag
+            score_pv = 0;
+            
+            // give PV move the highest score to search it first
+            return 20000;
+        }
+    }
     // todo IMPORTANT // to-do: you can optimize this part by encoding the target piece to the move U64 int
 
     // score caputre move
@@ -2494,6 +2517,11 @@ static inline int quiescense (int alpha, int beta){
 }
 // negamax alpha beta
 static inline int negamax(int alpha, int beta, int depth){
+    
+    // define find PV node variable
+    int found_pv = 0;
+
+    
     // init PV length
     pv_length[ply] = ply;
 
@@ -2530,7 +2558,12 @@ static inline int negamax(int alpha, int beta, int depth){
     
     // generate moves
     generate_moves(move_list);
+    
+    // if we are now following pv line
 
+    if (follow_pv)
+        // enable pv move score
+        enable_pv_scoring(move_list);
     // sort moves
     sort_moves(move_list, move_list->count);
     // loop over moves within a movelist
@@ -2554,8 +2587,24 @@ static inline int negamax(int alpha, int beta, int depth){
         // increment legal moves counter
         legal_moves++;
 
-        // score current move
-        int score = -negamax(-beta, -alpha, depth-1);
+        // varialbe to store current move score from the static evaluation perspective
+        int score;
+
+        // with else: depth 7: 4621 . without else depth 7: 16946 
+        // if we hit principle variation node
+        if (found_pv){
+            // once we found a score that is between alpha and beta, the rest of the moves are searched with the goal of proving that they are all bad, It's possible to do this a bit faster than a search that worries that one of the remaining moves might be good
+            score = -negamax(-alpha - 1, -alpha ,depth - 1);
+
+            if ((score > alpha) && (score < beta))
+                // re-search the move that has failed to be proved to be bad
+                // with normal alpha beta score bounds
+                score = -negamax(-beta, -alpha, depth-1);
+        }
+
+        // for all other types of nodes do normal alpha beta search
+        else
+            score = -negamax(-beta, -alpha, depth -1);
 
         // decrement ply
         ply--;
@@ -2583,6 +2632,8 @@ static inline int negamax(int alpha, int beta, int depth){
             // PV node (move) 
             alpha = score;
             
+            // enable found_PV
+            found_pv = 1;
             // write PV move
             pv_table[ply][ply] = move_list->moves[count];
 
@@ -2624,6 +2675,10 @@ void search_position(int depth){
     int score = 0;
     // reset nodes counter
     nodes = 0;
+
+    follow_pv = 0;
+    score_pv = 0;
+
     // clear helper data structure
     memset(killer_moves, 0, sizeof(killer_moves));
     memset(history_moves, 0, sizeof(history_moves));
@@ -2632,9 +2687,12 @@ void search_position(int depth){
 
     for (int current_depth = 1; current_depth <= depth; current_depth++){
         
-        // best move placeholder
+
+        // enable follow pv flag
+        follow_pv = 1;
+
         // find best move within a given position
-        score = negamax(-50000, 50000, depth);
+        score = negamax(-50000, 50000, current_depth);
         printf("info score cp %d depth %d nodes %ld pv ", score, current_depth, nodes);
         // loop over the moves a PV line
         for (int count = 0; count < pv_length[0]; count++){
@@ -2851,7 +2909,7 @@ void uci_loop()
     char input[2000];
 
     // print engine info
-    printf("id name Maahas\n");
+    printf("id name MorphyHead\n");
     printf("id author bohsen\n");
     printf("uciok\n");
 
@@ -2907,7 +2965,6 @@ void print_move_score(moves* move_list){
             printf("    move: ");
             print_move(move_list->moves[count]);
             printf(" score: %d\n", score_move(move_list->moves[count]));
-            
         }
 
 
@@ -2935,26 +2992,52 @@ int main(){
 
     // if debug mode
     if(debug){
+        printf("\n===========================================\n");
+        printf("   PERFT TEST - Starting Position\n");
+        printf("===========================================\n\n");
+
+        parse_fen(start_position);
+        print_board();
+
+        // Test perft depths 1-6 for starting position
+        printf("\n--- Starting Position Perft Tests ---\n");
+        for (int depth = 1; depth <= 6; depth++) {
+            nodes = 0;
+            perft_test(depth);
+            printf("\n");
+        }
+
+        printf("\n===========================================\n");
+        printf("   PERFT TEST - Kiwipete Position\n");
+        printf("===========================================\n\n");
+
+        // Test tricky position (Kiwipete)
         parse_fen(tricky_position);
         print_board();
-        
-        
-        moves move_list[1];
-        generate_moves(move_list);
-        search_position(6);
-        // print_move_score(move_list);
 
-        // // test killer moves
-        // killer_moves[0][ply] = move_list->moves[3];
-        // killer_moves[1][ply] = move_list->moves[2];
+        printf("\n--- Kiwipete Position Perft Tests ---\n");
+        for (int depth = 1; depth <= 5; depth++) {
+            nodes = 0;
+            perft_test(depth);
+            printf("\n");
+        }
 
-        // // test history moves
-        // history_moves[get_move_piece(move_list->moves[0])][get_move_target(move_list->moves[0])] = 35;
-
-        // sort_moves(move_list, move_list->count);
-
-        // print_move_score(move_list);
-
+        printf("\n===========================================\n");
+        printf("   Expected Results for Verification:\n");
+        printf("===========================================\n");
+        printf("Starting Position:\n");
+        printf("  Depth 1: 20 nodes\n");
+        printf("  Depth 2: 400 nodes\n");
+        printf("  Depth 3: 8,902 nodes\n");
+        printf("  Depth 4: 197,281 nodes\n");
+        printf("  Depth 5: 4,865,609 nodes\n");
+        printf("  Depth 6: 119,060,324 nodes\n\n");
+        printf("Kiwipete Position:\n");
+        printf("  Depth 1: 48 nodes\n");
+        printf("  Depth 2: 2,039 nodes\n");
+        printf("  Depth 3: 97,862 nodes\n");
+        printf("  Depth 4: 4,085,603 nodes\n");
+        printf("  Depth 5: 193,690,690 nodes\n\n");
 
     }
     else
