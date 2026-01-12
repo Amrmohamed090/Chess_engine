@@ -8,3 +8,6 @@ debug:
 dll:
 	gcc -shared -o bbc.dll bbc.c
 
+ANN:
+	gcc ANN.c -o ANN.exe
+

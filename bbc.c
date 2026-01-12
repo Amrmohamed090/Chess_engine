@@ -1,6 +1,24 @@
+/*************************\
+===========================
+Credit: 
+Base Code forked by Code Monkey
+
+Several Improvement are implemented, and more left to implement
+
+Done:
+Use Hardware instructions for popbit and get least significant bit
+ToDo
+
+implementation of fancy magic bitboards
+
+===========================
+\************************/
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #ifdef WIN64
     #include <windows.h>
@@ -419,8 +437,25 @@ int enpassant = no_sq;
 // castling rights
 int castle;
 
+/********************************\
+==================================
+      Time control variables
+==================================
+\********************************/
 
+// exit from engine flag
+int quit = 0;
 
+// UCI "movetime" command time counter
+int movestogo = 30;
+
+// UCI "inc" command's time increment holder
+int time = -1;
+
+// UCI "starttime" command time holder
+int starttime  0;
+
+//
 
 unsigned int random_state = 1804289383;
 //generate 32-bit psedu legal numbers
@@ -760,10 +795,7 @@ U64 mask_pawn_attacks(int side, int square){
     U64 attacks = 0ULL;
 
     // piece bitboard
-    U64 bitboard = 0ULL;
-
-    // set piece on board
-    set_bit(bitboard, square);
+    U64 bitboard = 1ULL << square;
 
     // white pawns
 
@@ -787,10 +819,9 @@ U64 mask_knight_attacks(int square){
     U64 attacks = 0ULL;
 
     // piece bitboard
-    U64 bitboard = 0ULL;
-
     // set piece on board
-    set_bit(bitboard, square);
+
+    U64 bitboard = 0ULL << square;
 
     //generate knight attacks
     if ((bitboard >> 17) & not_h_file)
@@ -819,9 +850,6 @@ U64 mask_knight_attacks(int square){
 
     if ((bitboard << 6) & not_hg_file)
     attacks |= (bitboard << 6);
-
-
-
 
     return attacks;
 }
@@ -2515,13 +2543,15 @@ static inline int quiescense (int alpha, int beta){
 
     return alpha;
 }
+
+const int full_depth_moves = 4;
+const int reduction_limit = 3;
+
+
 // negamax alpha beta
 static inline int negamax(int alpha, int beta, int depth){
     
-    // define find PV node variable
-    int found_pv = 0;
 
-    
     // init PV length
     pv_length[ply] = ply;
 
@@ -2549,7 +2579,24 @@ static inline int negamax(int alpha, int beta, int depth){
     // legal moves counter
     int legal_moves = 0;
 
+    if (depth >= 3 && in_check == 0 && ply){
+        copy_board();
 
+        // switch the side, literally giving opponent an extra move to make
+        side ^= 1;
+
+        enpassant = no_sq;
+
+        // search moves with reduced depth to find the beta cutoff
+
+        int score = -negamax( -beta, -beta + 1,depth - 1 - 2);
+        
+        // restore board state
+        take_back();
+
+        // fail-hard beta cuttoff
+        if (score >= beta)return beta;
+    }
     // old value of alpha
     int old_alpha = alpha;
     
@@ -2567,6 +2614,10 @@ static inline int negamax(int alpha, int beta, int depth){
     // sort moves
     sort_moves(move_list, move_list->count);
     // loop over moves within a movelist
+
+    
+    // moves_searched
+    int moves_searched = 0;
 
     for (int count = 0; count<move_list->count; count++){
         // preserve board state
@@ -2590,27 +2641,43 @@ static inline int negamax(int alpha, int beta, int depth){
         // varialbe to store current move score from the static evaluation perspective
         int score;
 
-        // with else: depth 7: 4621 . without else depth 7: 16946 
-        // if we hit principle variation node
-        if (found_pv){
-            // once we found a score that is between alpha and beta, the rest of the moves are searched with the goal of proving that they are all bad, It's possible to do this a bit faster than a search that worries that one of the remaining moves might be good
-            score = -negamax(-alpha - 1, -alpha ,depth - 1);
 
-            if ((score > alpha) && (score < beta))
-                // re-search the move that has failed to be proved to be bad
-                // with normal alpha beta score bounds
-                score = -negamax(-beta, -alpha, depth-1);
+        if (moves_searched == 0)
+            // do normal search
+            score = -negamax(-beta, -alpha, depth -1);
+        // late move reduction 
+        else{
+            if (moves_searched >= full_depth_moves
+                && depth >= reduction_limit 
+                && in_check == 0 
+                && get_move_capture(move_list->moves[count]) == 0
+                && get_move_promoted(move_list->moves[count]) == 0)
+                // search current move with reduced limit
+                score = -negamax(-(alpha+1), -alpha, depth-2);
+                
+            // hack to ensure that full-depth search is done
+            else score = alpha+1;
+            
+            // if we found a better move during LMR
+            if (score > alpha){
+                // research at normal depth but with narrowed score bandwith
+                score = -negamax( -alpha-1, -alpha, depth-1);
+
+                // if LMR failes, research at full depth and full score bandwidth
+                if( score > alpha && (score < beta))
+                    score = -negamax(-beta, -alpha, depth -1 );
+            }
         }
 
-        // for all other types of nodes do normal alpha beta search
-        else
-            score = -negamax(-beta, -alpha, depth -1);
-
+        
         // decrement ply
         ply--;
 
         // take move back
         take_back();
+
+        //increment the counter for move search so far
+        moves_searched ++;
 
         // fail hard beta cutoff 1- fail hard frame work, score cant be outside of alpha beta bounds 2- fail soft
         if (score >= beta){
@@ -2632,8 +2699,6 @@ static inline int negamax(int alpha, int beta, int depth){
             // PV node (move) 
             alpha = score;
             
-            // enable found_PV
-            found_pv = 1;
             // write PV move
             pv_table[ply][ply] = move_list->moves[count];
 
@@ -2684,15 +2749,28 @@ void search_position(int depth){
     memset(history_moves, 0, sizeof(history_moves));
     memset(pv_length, 0, sizeof(pv_length));
     memset(pv_table, 0, sizeof(pv_table));
-
+    int alpha, beta;
+    alpha = -50000;
+    beta = 50000;
     for (int current_depth = 1; current_depth <= depth; current_depth++){
         
-
+        
         // enable follow pv flag
         follow_pv = 1;
 
         // find best move within a given position
-        score = negamax(-50000, 50000, current_depth);
+        score = negamax(alpha, beta, current_depth);
+
+        if ((score <= alpha) || (score >= beta)){
+            alpha = -50000; // we fell outside the wndow, so try again with a full-width window search 
+
+            beta = 50000;
+            continue;
+        }
+
+        // set up the window for the next iteration
+        alpha = score - 50;
+        beta = score + 50;
         printf("info score cp %d depth %d nodes %ld pv ", score, current_depth, nodes);
         // loop over the moves a PV line
         for (int count = 0; count < pv_length[0]; count++){
@@ -2992,53 +3070,8 @@ int main(){
 
     // if debug mode
     if(debug){
-        printf("\n===========================================\n");
-        printf("   PERFT TEST - Starting Position\n");
-        printf("===========================================\n\n");
-
-        parse_fen(start_position);
-        print_board();
-
-        // Test perft depths 1-6 for starting position
-        printf("\n--- Starting Position Perft Tests ---\n");
-        for (int depth = 1; depth <= 6; depth++) {
-            nodes = 0;
-            perft_test(depth);
-            printf("\n");
-        }
-
-        printf("\n===========================================\n");
-        printf("   PERFT TEST - Kiwipete Position\n");
-        printf("===========================================\n\n");
-
-        // Test tricky position (Kiwipete)
         parse_fen(tricky_position);
-        print_board();
-
-        printf("\n--- Kiwipete Position Perft Tests ---\n");
-        for (int depth = 1; depth <= 5; depth++) {
-            nodes = 0;
-            perft_test(depth);
-            printf("\n");
-        }
-
-        printf("\n===========================================\n");
-        printf("   Expected Results for Verification:\n");
-        printf("===========================================\n");
-        printf("Starting Position:\n");
-        printf("  Depth 1: 20 nodes\n");
-        printf("  Depth 2: 400 nodes\n");
-        printf("  Depth 3: 8,902 nodes\n");
-        printf("  Depth 4: 197,281 nodes\n");
-        printf("  Depth 5: 4,865,609 nodes\n");
-        printf("  Depth 6: 119,060,324 nodes\n\n");
-        printf("Kiwipete Position:\n");
-        printf("  Depth 1: 48 nodes\n");
-        printf("  Depth 2: 2,039 nodes\n");
-        printf("  Depth 3: 97,862 nodes\n");
-        printf("  Depth 4: 4,085,603 nodes\n");
-        printf("  Depth 5: 193,690,690 nodes\n\n");
-
+        search_position(11);
     }
     else
         uci_loop();
