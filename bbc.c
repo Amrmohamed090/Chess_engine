@@ -443,19 +443,180 @@ int castle;
 ==================================
 \********************************/
 
+
 // exit from engine flag
 int quit = 0;
 
-// UCI "movetime" command time counter
+// UCI "movestogo" command moves counter
 int movestogo = 30;
 
-// UCI "inc" command's time increment holder
+// UCI "movetime" command time counter
+int movetime = -1;
+
+// UCI "time" command holder (ms)
 int time = -1;
 
-// UCI "starttime" command time holder
-int starttime  0;
+// UCI "inc" command's time increment holder
+int inc = 0;
 
-//
+// UCI "starttime" command time holder
+int starttime = 0;
+
+// UCI "stoptime" command time holder
+int stoptime = 0;
+
+// variable to flag time control availability
+int timeset = 0;
+
+// variable to flag when the time is up
+int stopped = 0;
+
+
+/**********************************\
+ ==================================
+ 
+       Miscellaneous functions
+          forked from VICE
+         by Richard Allbert
+ 
+ ==================================
+\**********************************/
+
+// get time in milliseconds
+int get_time_ms()
+{
+    #ifdef WIN64
+        return GetTickCount();
+    #else
+        struct timeval time_value;
+        gettimeofday(&time_value, NULL);
+        return time_value.tv_sec * 1000 + time_value.tv_usec / 1000;
+    #endif
+}
+
+/*
+
+  Function to "listen" to GUI's input during search.
+  It's waiting for the user input from STDIN.
+  OS dependent.
+  
+  First Richard Allbert aka BluefeverSoftware grabbed it from somewhere...
+  And then Code Monkey King has grabbed it from VICE)
+  
+*/
+  
+int input_waiting()
+{
+    #ifndef WIN32
+        fd_set readfds;
+        struct timeval tv;
+        FD_ZERO (&readfds);
+        FD_SET (fileno(stdin), &readfds);
+        tv.tv_sec=0; tv.tv_usec=0;
+        select(16, &readfds, 0, 0, &tv);
+
+        return (FD_ISSET(fileno(stdin), &readfds));
+    #else
+        static int init = 0, pipe;
+        static HANDLE inh;
+        DWORD dw;
+
+        if (!init)
+        {
+            init = 1;
+            inh = GetStdHandle(STD_INPUT_HANDLE);
+            pipe = !GetConsoleMode(inh, &dw);
+            if (!pipe)
+            {
+                SetConsoleMode(inh, dw & ~(ENABLE_MOUSE_INPUT|ENABLE_WINDOW_INPUT));
+                FlushConsoleInputBuffer(inh);
+            }
+        }
+        
+        if (pipe)
+        {
+           if (!PeekNamedPipe(inh, NULL, 0, NULL, &dw, NULL)) return 1;
+           return dw;
+        }
+        
+        else
+        {
+           GetNumberOfConsoleInputEvents(inh, &dw);
+           return dw <= 1 ? 0 : dw;
+        }
+
+    #endif
+}
+
+// read GUI/user input
+void read_input()
+{
+    // bytes to read holder
+    int bytes;
+    
+    // GUI/user input
+    char input[256] = "", *endc;
+
+    // "listen" to STDIN
+    if (input_waiting())
+    {
+        // tell engine to stop calculating
+        stopped = 1;
+        
+        // loop to read bytes from STDIN
+        do
+        {
+            // read bytes from STDIN
+            bytes=read(fileno(stdin), input, 256);
+        }
+        
+        // until bytes available
+        while (bytes < 0);
+        
+        // searches for the first occurrence of '\n'
+        endc = strchr(input,'\n');
+        
+        // if found new line set value at pointer to 0
+        if (endc) *endc=0;
+        
+        // if input is available
+        if (strlen(input) > 0)
+        {
+            // match UCI "quit" command
+            if (!strncmp(input, "quit", 4))
+            {
+                // tell engine to terminate exacution    
+                quit = 1;
+            }
+
+            // // match UCI "stop" command
+            else if (!strncmp(input, "stop", 4))    {
+                // tell engine to terminate exacution
+                quit = 1;
+            }
+        }   
+    }
+}
+
+// a bridge function to interact between search and GUI input
+static void communicate() {
+	// if time is up break here
+    if(timeset == 1 && get_time_ms() > stoptime) {
+		// tell engine to stop calculating
+		stopped = 1;
+	}
+	
+    // read GUI input
+	read_input();
+}
+
+
+/******************************\
+================================
+        Random numbers
+================================
+\******************************/
+
 
 unsigned int random_state = 1804289383;
 //generate 32-bit psedu legal numbers
@@ -477,11 +638,6 @@ unsigned int get_random_U32_number(){
 
 
 
-/******************************\
-================================
-        Random numbers
-================================
-\******************************/
 
 // generate 64 bit pseudo legal numbers
 
@@ -821,7 +977,7 @@ U64 mask_knight_attacks(int square){
     // piece bitboard
     // set piece on board
 
-    U64 bitboard = 0ULL << square;
+    U64 bitboard = 1ULL << square;
 
     //generate knight attacks
     if ((bitboard >> 17) & not_h_file)
@@ -895,8 +1051,8 @@ U64 mask_bishob_attacks(int square){
     int r, f;
 
     // init target ranks & files
-    int tr = square / 8;
-    int tf = square % 8;
+    int tr = square >> 3;  // Faster than / 8
+    int tf = square & 7;   // Faster than % 8
     
     // mask relevant bishob occupancy bits
     for (r= tr+1, f=tf+1; r <=6 && f<=6; r++, f++) attacks |= (1ULL << (r * 8 + f));
@@ -2013,16 +2169,6 @@ void print_attacked_squares(int side){
 ================================
 \******************************/
 
-int get_time_ms(){
-    #ifdef WIN64
-        return GetTickCount();
-    #else
-        struct timeval time_value;
-        gettimeofday(&time_value, NULL);
-        return time_value.tv_sec * 1000 + time_value.tv_usec / 1000;
-    #endif
-
-}
 // int test_suit(char * test_fen){
 //     init_all();
 //     parse_fen(test_fen);
@@ -2793,14 +2939,18 @@ void search_position(int depth){
 
 
 
-/******************************\
-===========================i=====
-              UCI
-================================
-\******************************/
 
-// parse user GUI move string input(e.g., "e7e8q")
+/**********************************\
+ ==================================
+ 
+                UCI
+          forked from VICE
+         by Richard Allbert
+ 
+ ==================================
+\**********************************/
 
+// parse user/GUI move string input (e.g. "e7e8q")
 int parse_move(char *move_string)
 {
     // create move list instance
@@ -2826,7 +2976,7 @@ int parse_move(char *move_string)
         {
             // init promoted piece
             int promoted_piece = get_move_promoted(move);
-
+            
             // promoted piece is available
             if (promoted_piece)
             {
@@ -2864,29 +3014,29 @@ int parse_move(char *move_string)
 }
 
 /*
-    Example UCI commands to init position on the board
-
-    you can use the starting position using startps command or from a fen string
-
+    Example UCI commands to init position on chess board
+    
     // init start position
     position startpos
-
-    // init start position and make the move on chess board
+    
+    // init start position and make the moves on chess board
     position startpos moves e2e4 e7e5
     
-    // init position from fen string
-    position fen r3k2r/p1ppqpb1/bn2pnp1/........
-
-    // init position from fen string and make move on chess board
-    position fen r3k2r/p1ppqpb1/bn2pnp1/........ - 0 1 moves e2a6 e8g8
-
+    // init position from FEN string
+    position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 
+    
+    // init position from fen string and make moves on chess board
+    position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 moves e2a6 e8g8
 */
 
 // parse UCI "position" command
 void parse_position(char *command)
 {
-    char *current_char = command + strlen("position");
-    while (*current_char == ' ') current_char++;
+    // shift pointer to the right where next token begins
+    command += 9;
+    
+    // init pointer to the current character in the command string
+    char *current_char = command;
     
     // parse UCI "startpos" command
     if (strncmp(command, "startpos", 8) == 0)
@@ -2907,7 +3057,6 @@ void parse_position(char *command)
         // found "fen" substring
         else
         {
-            printf("fen found\n");
             // shift pointer to the right where next token begins
             current_char += 4;
             
@@ -2944,95 +3093,171 @@ void parse_position(char *command)
             
             // go to the next move
             current_char++;
-        }
-        
+        }        
+    }
+    
+    // print board
+    print_board();
+}
+
+// parse UCI command "go"
+void parse_go(char *command)
+{
+    // init parameters
+    int depth = -1;
+
+    // init argument
+    char *argument = NULL;
+
+    // infinite search
+    if ((argument = strstr(command,"infinite"))) {}
+
+    // match UCI "binc" command
+    if ((argument = strstr(command,"binc")) && side == black)
+        // parse black time increment
+        inc = atoi(argument + 5);
+
+    // match UCI "winc" command
+    if ((argument = strstr(command,"winc")) && side == white)
+        // parse white time increment
+        inc = atoi(argument + 5);
+
+    // match UCI "wtime" command
+    if ((argument = strstr(command,"wtime")) && side == white)
+        // parse white time limit
+        time = atoi(argument + 6);
+
+    // match UCI "btime" command
+    if ((argument = strstr(command,"btime")) && side == black)
+        // parse black time limit
+        time = atoi(argument + 6);
+
+    // match UCI "movestogo" command
+    if ((argument = strstr(command,"movestogo")))
+        // parse number of moves to go
+        movestogo = atoi(argument + 10);
+
+    // match UCI "movetime" command
+    if ((argument = strstr(command,"movetime")))
+        // parse amount of time allowed to spend to make a move
+        movetime = atoi(argument + 9);
+
+    // match UCI "depth" command
+    if ((argument = strstr(command,"depth")))
+        // parse search depth
+        depth = atoi(argument + 6);
+
+    // if move time is not available
+    if(movetime != -1)
+    {
+        // set time equal to move time
+        time = movetime;
+
+        // set moves to go to 1
+        movestogo = 1;
     }
 
-    print_board();
+    // init start time
+    starttime = get_time_ms();
 
-}
+    // init search depth
+    depth = depth;
 
-void parse_go(char *command){
-    // define depth
-    int depth = 6;  // Move default to top
-    // init character pointer to the current depth argument
-    char *current_depth = strstr(command, "depth");
+    // if time control is available
+    if(time != -1)
+    {
+        // flag we're playing with time control
+        timeset = 1;
 
-    // handle fixed depth search
-    if (current_depth != NULL)
-        // convert string to integer, the result value of depth
-        depth = atoi(current_depth + 6);
-    // search_postion
+        // set up timing
+        time /= movestogo;
+        time -= 50;
+        stoptime = starttime + time + inc;
+    }
+
+    // if depth is not available
+    if(depth == -1)
+        // set depth to 64 plies (takes ages to complete...)
+        depth = 64;
+
+    // print debug info
+    printf("time:%d start:%d stop:%d depth:%d timeset:%d\n",
+    time, starttime, stoptime, depth, timeset);
+
+    // search position
     search_position(depth);
-
-    printf("depth: %d\n", depth);
-
-
-
 }
 
-/*
-    GUI -> isready 
-    Engine -> readyok
-    GUI -> ucinewgame
-*/
 // main UCI loop
 void uci_loop()
 {
-    // reset STDIN and STDOUT
+    // reset STDIN & STDOUT buffers
     setbuf(stdin, NULL);
     setbuf(stdout, NULL);
-
+    
     // define user / GUI input buffer
     char input[2000];
-
+    
     // print engine info
-    printf("id name MorphyHead\n");
-    printf("id author bohsen\n");
+    printf("id name Morphious\n");
+    printf("id name Bohsen\n");
     printf("uciok\n");
-
+    
     // main loop
-    while(1){
+    while (1)
+    {
         // reset user /GUI input
         memset(input, 0, sizeof(input));
-
+        
         // make sure output reaches the GUI
         fflush(stdout);
-
+        
         // get user / GUI input
-        if(!fgets(input, 2000, stdin))
+        if (!fgets(input, 2000, stdin))
             // continue the loop
             continue;
-
-        // make sure the input is available
-        if (input[0] == '\n') continue;
-
+        
+        // make sure input is available
+        if (input[0] == '\n')
+            // continue the loop
+            continue;
+        
         // parse UCI "isready" command
-        if (strncmp(input, "isready", 7) == 0){
+        if (strncmp(input, "isready", 7) == 0)
+        {
             printf("readyok\n");
             continue;
         }
-
-        // parse UCI "position" input
-        else if (strncmp(input, "position", 8) == 0) parse_position(input);
         
-        // parse UCI new game input
-        else if (strncmp(input, "ucinewgame", 10) == 0) parse_position("position startpos");
+        // parse UCI "position" command
+        else if (strncmp(input, "position", 8) == 0)
+            // call parse position function
+            parse_position(input);
         
-        // parse UCI "uci" input
-        else if (strncmp(input, "uci", 3) == 0){
+        // parse UCI "ucinewgame" command
+        else if (strncmp(input, "ucinewgame", 10) == 0)
+            // call parse position function
+            parse_position("position startpos");
+        
+        // parse UCI "go" command
+        else if (strncmp(input, "go", 2) == 0)
+            // call parse go function
+            parse_go(input);
+        
+        // parse UCI "quit" command
+        else if (strncmp(input, "quit", 4) == 0)
+            // quit from the chess engine program execution
+            break;
+        
+        // parse UCI "uci" command
+        else if (strncmp(input, "uci", 3) == 0)
+        {
             // print engine info
-            printf("id name MoriphiesHead\n");
+            printf("id name BBC\n");
+            printf("id name Code Monkey King\n");
             printf("uciok\n");
         }
-
-        // parse UCI go input
-        else if (strncmp(input, "go", 2) == 0) parse_go(input);
-
-        //parse UCI "quit" input
-        else if (strncmp(input, "quit", 4) == 0) break;
     }
-
 }
 
 
@@ -3066,12 +3291,12 @@ int main(){
     init_all();
 
     // debug variable mode
-    int debug = 1;
+    int debug = 0;
 
     // if debug mode
     if(debug){
-        parse_fen(tricky_position);
-        search_position(11);
+        parse_fen(start_position);
+        perft_test(6);
     }
     else
         uci_loop();
