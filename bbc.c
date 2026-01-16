@@ -437,6 +437,11 @@ int enpassant = no_sq;
 // castling rights
 int castle;
 
+// "almost" unique position identifier aka hash key
+// almost because collisions can happen of course
+U64 hash_key;
+
+
 /********************************\
 ==================================
       Time control variables
@@ -613,7 +618,9 @@ static void communicate() {
 
 /******************************\
 ================================
+
         Random numbers
+
 ================================
 \******************************/
 
@@ -635,9 +642,6 @@ unsigned int get_random_U32_number(){
     return number;
 
 }
-
-
-
 
 // generate 64 bit pseudo legal numbers
 
@@ -715,11 +719,15 @@ U64 generate_magic_number(){
     }
 #endif
 
+
+
 /******************************\
 ================================
         Input and output
 ================================
 \******************************/
+
+
 //print bitboard
 void print_bitboard(U64 bitboard){
     // loop over board ranks
@@ -746,6 +754,7 @@ void print_bitboard(U64 bitboard){
     printf("\n\n    a b c d e f g h\n\n");
     printf("    Bitboard: %llud\n\n", bitboard);
 }
+
 
 void print_board(){
     for (int rank = 0; rank<8; rank++){
@@ -780,12 +789,118 @@ void print_board(){
 
     printf("    Side:      %s\n", (!side) ? "w" : "b" );
     printf("    Enpassant: %s\n", (enpassant != no_sq) ? square_to_coordinates[enpassant] : "no");
-    printf("    Casteling: %c%c%c%c\n\n", (castle & wk) ? 'K': '-',
+    printf("    Casteling: %c%c%c%c\n", (castle & wk) ? 'K': '-',
                                             (castle & wq) ? 'Q': '-',
                                             (castle & bk) ? 'k': '-',
                                             (castle & bq) ? 'q': '-');
+    printf("    hash key: %llx\n\n", hash_key);
+
+                                        }
+
+
+/******************************\
+================================
+        Zobrist Hashing
+================================
+\******************************/
+
+
+// random piece keys [piece][square]
+U64 piece_keys[12][64];
+
+// random enpassant keys [square]
+U64 enpassant_keys[64];
+
+// random castling keys
+U64 castle_keys[16];
+
+// random side key
+U64 side_key;
+
+// we want to initialize all these arrays with random numbers
+// init random hash keys
+void init_hash_keys(){
+    
+    // update random seed
+    random_state = 1804289383;
+
+    // search for random state number
+    // when we were generating for the magic bitboards, we used random_State = 1804289383
+    // we need to loop over all the pieces and squares for piece_keys
+    for (int piece = P; piece <= k; piece++){
+        for (int square = 0; square < 64; square++){
+            piece_keys[piece][square] = get_random_U64_numbers();
+        }
+    }
+    
+    for (int square = 0; square < 64; square ++){
+        // init random enpassant keys
+        enpassant_keys[square] = get_random_U64_numbers();
+    }
+
+
+    // loop over castling keys
+    for (int index = 0; index < 16; index++)
+    castle_keys[index] = get_random_U64_numbers();
+
+    // init random side key
+    side_key = get_random_U64_numbers();
+
 
 }
+
+
+
+// todo, this can be done while generating the move, no need to have a seperate function with it
+// generate almost unique position identifier aka hash key from scratch
+U64 generate_hash_key(){
+    // define a variable to hold the final hash key
+    U64 final_key = 0ULL;
+
+    // temp piece bitboard copy
+    U64 bitboard;
+
+    // lets start with the pieces
+    for (int piece = P; piece <= k; piece++){
+        // init piece bitboard copy
+        bitboard = bitboards[piece];
+
+        // loop over the pieces within the bitboard
+        while (bitboard){
+
+            int square = get_ls1b_index(bitboard);
+
+            // hash piece
+            final_key ^= piece_keys[piece][square];
+
+
+            // pop LS1B
+            pop_bit(bitboard, square);
+        }
+    }
+
+    if (enpassant != no_sq)
+        // hash enpassant
+        final_key ^= enpassant_keys[enpassant];
+
+    // hash castling rights
+    final_key ^= castle_keys[castle];
+
+    // hash the side only if black is to move
+    if (side == black) final_key ^= side_key;
+
+
+
+    // return generated hash key
+    return final_key;
+}
+
+
+/******************************\
+================================
+        Loading the Fen
+================================
+\******************************/
 
 
 void parse_fen(char* fen){
@@ -894,7 +1009,11 @@ void parse_fen(char* fen){
 
     occupancies[both] |= occupancies[white];
     occupancies[both] |= occupancies[black];
-}
+
+    // init hash key
+    hash_key = generate_hash_key();
+}   
+
 
 /******************************\
 ================================
@@ -2617,7 +2736,11 @@ void sort_moves(moves* move_list, int count) {
 
 
 static inline int quiescense (int alpha, int beta){
+    // check if time is up
+    if ((nodes & 2047) == 0)
+        communicate();
     
+
     // incrementnodes count
     nodes++;
 
@@ -2891,6 +3014,9 @@ void search_position(int depth){
     // reset nodes counter
     nodes = 0;
 
+    // reset time control sopped flag
+    stopped = 0;
+
     follow_pv = 0;
     score_pv = 0;
 
@@ -2910,6 +3036,10 @@ void search_position(int depth){
 
         // find best move within a given position
         score = negamax(alpha, beta, current_depth);
+
+        // stop if the time is up
+        if (stopped == 1)
+            break;
 
         if ((score <= alpha) || (score >= beta)){
             alpha = -50000; // we fell outside the wndow, so try again with a full-width window search 
@@ -3105,8 +3235,20 @@ void parse_position(char *command)
 }
 
 // parse UCI command "go"
+// parse UCI command "go"
 void parse_go(char *command)
 {
+    // reset all time control variables
+    quit = 0;
+    movestogo = 30;
+    movetime = -1;
+    time = -1;
+    inc = 0;
+    starttime = 0;
+    stoptime = 0;
+    timeset = 0;
+    stopped = 0;
+
     // init parameters
     int depth = -1;
 
@@ -3118,37 +3260,30 @@ void parse_go(char *command)
 
     // match UCI "binc" command
     if ((argument = strstr(command,"binc")) && side == black)
-        // parse black time increment
         inc = atoi(argument + 5);
 
     // match UCI "winc" command
     if ((argument = strstr(command,"winc")) && side == white)
-        // parse white time increment
         inc = atoi(argument + 5);
 
     // match UCI "wtime" command
     if ((argument = strstr(command,"wtime")) && side == white)
-        // parse white time limit
         time = atoi(argument + 6);
 
     // match UCI "btime" command
     if ((argument = strstr(command,"btime")) && side == black)
-        // parse black time limit
         time = atoi(argument + 6);
 
     // match UCI "movestogo" command
     if ((argument = strstr(command,"movestogo")))
-        // parse number of moves to go
         movestogo = atoi(argument + 10);
 
     // match UCI "movetime" command
     if ((argument = strstr(command,"movetime")))
-        // parse amount of time allowed to spend to make a move
         movetime = atoi(argument + 9);
 
     // match UCI "depth" command
     if ((argument = strstr(command,"depth")))
-        // parse search depth
         depth = atoi(argument + 6);
 
     // if move time is not available
@@ -3164,9 +3299,6 @@ void parse_go(char *command)
     // init start time
     starttime = get_time_ms();
 
-    // init search depth
-    depth = depth;
-
     // if time control is available
     if(time != -1)
     {
@@ -3175,13 +3307,16 @@ void parse_go(char *command)
 
         // set up timing
         time /= movestogo;
-        time -= 50;
+        
+        // Only subtract overhead if we have enough time
+        if (time > 50)
+            time -= 50;
+        
         stoptime = starttime + time + inc;
     }
 
     // if depth is not available
     if(depth == -1)
-        // set depth to 64 plies (takes ages to complete...)
         depth = 64;
 
     // print debug info
@@ -3282,6 +3417,8 @@ void print_move_score(moves* move_list){
             init all
 ================================
 \******************************/
+
+
 void init_all(){
     init_leapers_attacks();
 
@@ -3289,18 +3426,22 @@ void init_all(){
 
     init_sliders_attacks(bishob);
     init_sliders_attacks(rook);
+    init_hash_keys();
 }
+
+ 
 int main(){
     // init all attacks bitboards
     init_all();
-
     // debug variable mode
-    int debug = 0;
+    int debug = 1;
 
     // if debug mode
     if(debug){
-        parse_fen(start_position);
-        perft_test(6);
+        parse_fen(tricky_position);
+        printf("hash keys: %llx\n", generate_hash_key());
+
+        print_board();
     }
     else
         uci_loop();
