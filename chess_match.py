@@ -34,19 +34,23 @@ class GameResult:
 
 
 class UCIEngine:
-    def __init__(self, path: str, name: str = None):
+    def __init__(self, path: str, name: str = None, log_callback=None):
         self.path = path
         self.name = name or os.path.basename(path)
         self.process = None
         self.stdout_queue = None
         self.reader_thread = None
+        self.log_callback = log_callback
 
     def _reader_worker(self):
         """Background thread to read stdout without blocking."""
         try:
             for line in iter(self.process.stdout.readline, ''):
                 if line:
-                    self.stdout_queue.put(line.strip())
+                    stripped = line.strip()
+                    self.stdout_queue.put(stripped)
+                    if self.log_callback:
+                        self.log_callback("recv", stripped)
                 else:
                     break
         except:
@@ -75,6 +79,8 @@ class UCIEngine:
         if self.process:
             self.process.stdin.write(command + "\n")
             self.process.stdin.flush()
+            if self.log_callback:
+                self.log_callback("send", command)
 
     def _read_line(self, timeout: float = 5.0) -> Optional[str]:
         if not self.stdout_queue:
