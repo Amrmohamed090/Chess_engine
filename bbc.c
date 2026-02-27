@@ -29,6 +29,8 @@ implementation of fancy magic bitboards
 
 #define U64 unsigned long long
 
+
+
 // sides to move (colors)
 enum {white, black, both};
 // bishob and rook
@@ -40,7 +42,7 @@ enum {rook, bishob};
 #define tricky_position "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 "
 #define killer_position "rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1"
 #define cmk_position "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1NPP/PPP1NPB1/R1BQ1RK1 b - - 0 9 "
-
+#define repetitions "2r3k1/R7/8/1R6/8/8/P4KPP/8 w - - 0 40 "
 
 const int bishob_relevant_bits[64] = {
     6, 5, 5, 5, 5, 5, 5, 6,
@@ -441,6 +443,14 @@ int castle;
 // almost because collisions can happen of course
 U64 hash_key;
 
+// positions repetition table, to detect position repetitions
+U64 repetitions_table[1000]; // 1000 is the number of plies in a 500 moves game
+
+// repetition index
+int repetition_index;
+
+// half move counter
+int ply;
 
 /********************************\
 ==================================
@@ -918,6 +928,13 @@ void parse_fen(char* fen){
     side = 0;
     enpassant = no_sq;
     castle = 0;
+
+    // reset repetition index
+    repetition_index = 0;
+
+    //reset repetition table
+    memset(repetitions_table, 0ULL, sizeof(repetitions_table));
+
 
     // loop over board ranks
 
@@ -2651,9 +2668,29 @@ static inline int evaluate(){
 
 /******************************\
 ================================
+              search
+================================
+\******************************/
+
+
+
+
+// these are the score bounds for the reagne of the mating scores
+
+/*
+ Score layout
+ [-infinity, -mate_value...-mate_score, score ... mate_score, mate_value, infinity]
+*/
+#define infinity 50000
+#define mate_value 49000
+#define mate_score 48000
+
+/******************************\
+================================
         Transposition Table
 ================================
 \******************************/
+
 
 #define hash_size 0x400000
 
@@ -2695,13 +2732,21 @@ static inline int read_hash_entry(int alpha, int beta, int depth){
 
     // make sure we are dealing with the exact position we need
     if(hash_entry->hash_key == hash_key){
-        // make sure we match the exact depth our search is now at
         
+        
+        // make sure we match the exact depth our search is now at
         if (hash_entry->depth >= depth){
+
+            // extract stored score from TT entry
+            int score = hash_entry->score;
+
+            if (score < -mate_score) score += ply;
+            if (score > mate_score) score -= ply;
+
             // match the exact (PV node) score
-            if (hash_entry->flag == hash_flag_exact){return hash_entry->score;}
-            if (hash_entry->flag == hash_flag_alpha && hash_entry->score <=alpha){return alpha;}
-            if (hash_entry->flag == hash_flag_beta && hash_entry->score >=beta){return beta;}
+            if (hash_entry->flag == hash_flag_exact){return score;}
+            if (hash_entry->flag == hash_flag_alpha && score <=alpha){return alpha;}
+            if (hash_entry->flag == hash_flag_beta && score >=beta){return beta;}
 
         }
     }
@@ -2711,9 +2756,12 @@ static inline int read_hash_entry(int alpha, int beta, int depth){
 
 
 
+
 static inline void write_hash_entry(int score, int depth, int hash_flag){
     tt *hash_entry = &hash_table[hash_key % hash_size];
 
+    if (score < -mate_score) score -=ply;
+    if (score > mate_score) score += ply;
     //write hash entry data
     hash_entry->hash_key = hash_key;
     hash_entry->score = score;
@@ -2721,11 +2769,6 @@ static inline void write_hash_entry(int score, int depth, int hash_flag){
     hash_entry->depth = depth;
 }
 
-/******************************\
-================================
-              search
-================================
-\******************************/
 
 // most valuable victim & less valuable attacher
 
@@ -2772,8 +2815,6 @@ int killer_moves[2][max_ply];
 // history moves [piece][square]
 int history_moves[12][64];
 
-// half move counter
-int ply;
 
 
 
@@ -2917,6 +2958,18 @@ void sort_moves(moves* move_list, int count) {
     }
 }
 
+// position repeition detection
+static inline int is_repetition(){
+
+    // loop over repetition indicies range
+    for (int index = 0; index < repetition_index; index++)
+        // if we found the index of the position
+        if (repetitions_table[index] == hash_key)
+            return 1;
+    // if no repetition found
+    return 0;
+}
+
 
 static inline int quiescense (int alpha, int beta){
     // check if time is up
@@ -2927,6 +2980,7 @@ static inline int quiescense (int alpha, int beta){
     // incrementnodes count
     nodes++;
 
+    if (ply && is_repetition())return 0;
     
     // evaluate position
     int evaluation = evaluate();
@@ -2958,12 +3012,16 @@ static inline int quiescense (int alpha, int beta){
         
         // increment ply
         ply++;
+        //increment repetition index
+        repetition_index++;
+        repetitions_table[repetition_index] = hash_key;
 
         // make sure to make only legal moves
         if (make_move(move_list->moves[count], only_captures) == 0){
             // decrement ply
             ply--;
-            
+            // decrement repetition index
+            repetition_index--;
             // skip to the next move
             continue;
         }
@@ -2973,6 +3031,9 @@ static inline int quiescense (int alpha, int beta){
 
         // decrement ply
         ply--;
+
+        // decrement repetition index
+        repetition_index--;
 
         // take move back
         take_back();
@@ -3006,8 +3067,14 @@ static inline int negamax(int alpha, int beta, int depth){
 
     int hash_flag = hash_flag_alpha;
     
-    // read hash entry if the move has already been searched (hence has value)
-    if ((score = read_hash_entry(alpha, beta, depth)) != no_hash_entry){return score;}
+    // if position is repeated, return draw score
+    if (ply && is_repetition())return 0;
+
+    // a hach by Pedro Castro to figure out whether the current node is a PV node
+    int pv_node = beta - alpha > 1;
+
+    // read hash entry if we are not a root ply, and the hash entry is available, and the current node is not a principle variation node
+    if (ply && (score = read_hash_entry(alpha, beta, depth)) != no_hash_entry && pv_node == 0){return score;}
     
     // every 2047 nodes
     if((nodes & 2047 ) == 0)
@@ -3047,6 +3114,10 @@ static inline int negamax(int alpha, int beta, int depth){
         copy_board();
         ply++;
 
+        //increment repetition index
+        repetition_index++;
+        repetitions_table[repetition_index] = hash_key;
+
         // switch the side, literally giving opponent an extra move to make
         side ^= 1;
 
@@ -3066,6 +3137,8 @@ static inline int negamax(int alpha, int beta, int depth){
         // take back the copied board and decrement ply
         take_back();
         ply--;
+        // decrement repetition index
+        repetition_index--;
 
         // fail-hard beta cuttoff
         if (score >= beta)return beta;
@@ -3099,10 +3172,17 @@ static inline int negamax(int alpha, int beta, int depth){
         // increment ply
         ply++;
 
+        //increment repetition index
+        repetition_index++;
+        repetitions_table[repetition_index] = hash_key;
+
+
         // make sure to make only legal moves
         if (make_move(move_list->moves[count], all_moves) == 0){
             // decrement ply
             ply--;
+            // decrement repetition index
+            repetition_index--;
             
             // skip to the next move
             continue;
@@ -3145,6 +3225,9 @@ static inline int negamax(int alpha, int beta, int depth){
         
         // decrement ply
         ply--;
+
+        // decrement repetition index
+        repetition_index--;
 
         // take move back
         take_back();
@@ -3200,7 +3283,7 @@ static inline int negamax(int alpha, int beta, int depth){
         // king in check
         if (in_check){
             // return mating score
-            return -49000 + ply;
+            return -mate_value + ply;
         }
 
         // king is not in check
@@ -3241,8 +3324,8 @@ void search_position(int depth){
     clear_hash_table();
 
     int alpha, beta;
-    alpha = -50000;
-    beta = 50000;
+    alpha = -infinity;
+    beta = infinity;
     for (int current_depth = 1; current_depth <= depth; current_depth++){
         
         
@@ -3257,16 +3340,24 @@ void search_position(int depth){
             break;
 
         if ((score <= alpha) || (score >= beta)){
-            alpha = -50000; // we fell outside the wndow, so try again with a full-width window search 
-
-            beta = 50000;
+            alpha = -infinity; // we fell outside the window, so try again with a full-width window search 
+            beta = infinity;
+            current_depth--;
             continue;
         }
 
         // set up the window for the next iteration
         alpha = score - 50;
         beta = score + 50;
-        printf("info score cp %d depth %d nodes %ld pv ", score, current_depth, nodes);
+        
+        if (score > -mate_value && score < -mate_score)
+            printf("info score mate %d depth %d nodes %ld time %d pv ", -(score + mate_value) / 2 - 1, current_depth, nodes, get_time_ms() - starttime);
+        
+        else if (score > mate_value && score < mate_score)
+            printf("info score mate %d depth %d nodes %ld time %d pv ", (mate_value - score) / 2 + 1, current_depth, nodes, get_time_ms() - starttime);
+        
+        else  
+            printf("info score cp %d depth %d nodes %ld time %d pv ", score, current_depth, nodes, get_time_ms() - starttime);
         // loop over the moves a PV line
         for (int count = 0; count < pv_length[0]; count++){
             // print pv move
@@ -3439,6 +3530,10 @@ void parse_position(char *command)
                 // break out of the loop
                 break;
             
+            // increment repetition index
+            repetition_index ++;
+            repetitions_table[repetition_index] = hash_key;
+            
             // make move on the chess board
             make_move(move, all_moves);
             
@@ -3589,14 +3684,25 @@ void uci_loop()
         }
         
         // parse UCI "position" command
-        else if (strncmp(input, "position", 8) == 0)
+        else if (strncmp(input, "position", 8) == 0){
+            // make sure we are clearing the hash table
+            clear_hash_table();
             // call parse position function
             parse_position(input);
+
+       
+
+        }
         
         // parse UCI "ucinewgame" command
-        else if (strncmp(input, "ucinewgame", 10) == 0)
+        else if (strncmp(input, "ucinewgame", 10) == 0){
+            // make sure we are clearing the hash table
+            clear_hash_table();
             // call parse position function
             parse_position("position startpos");
+
+        }
+            
         
         // parse UCI "go" command
         else if (strncmp(input, "go", 2) == 0)
@@ -3658,7 +3764,9 @@ int main(){
 
     // if debug mode
     if(debug){
-        parse_fen(start_position);
+        parse_fen(repetitions);
+        search_position(50);
+
     }
     else
         uci_loop();

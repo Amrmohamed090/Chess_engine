@@ -3,7 +3,7 @@ all:
 
 
 debug:
-	gcc bbc.c -o bbc.exe
+	gcc bbc.c -o bbc_debug.exe
 
 dll:
 	gcc -shared -o bbc.dll bbc.c
