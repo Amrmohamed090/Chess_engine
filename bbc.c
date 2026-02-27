@@ -2614,6 +2614,12 @@ const int mirror_score[128] =
 	a8, b8, c8, d8, e8, f8, g8, h8
 };
 
+
+/*
+    File mask
+
+*/
+
 // position evaluation
 static inline int evaluate(){
     // static evaluation score
@@ -2974,8 +2980,11 @@ static inline int is_repetition(){
 static inline int quiescense (int alpha, int beta){
     // check if time is up
     if ((nodes & 2047) == 0)
+    {
         communicate();
-    
+        if (stopped) return 0;
+    }
+
 
     // incrementnodes count
     nodes++;
@@ -3078,8 +3087,12 @@ static inline int negamax(int alpha, int beta, int depth){
     
     // every 2047 nodes
     if((nodes & 2047 ) == 0)
+    {
         // "listen" to the GUI/user input
-		communicate();
+        communicate();
+        // stop immediately if time is up
+        if (stopped) return 0;
+    }
 
 
     // init PV length
