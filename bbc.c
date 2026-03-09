@@ -394,7 +394,7 @@ enum {P, N, B, R, Q, K, p, n, b, r, q, k};
 char ascii_pieces[12] = "PNBRQKpnbrqk";
 
 // unicode pieces
-char *unicode_pieces[12] = {"♟︎","♞","♝","♜","♛","♚","♙","♘","♗","♖","♕","♔"};
+char *unicode_pieces[12] = {"♙","♘","♗","♖","♕","♔","♟","♞","♝","♜","♛","♚"};
 
 // convert ascii pieces character to encoded contants
 int char_pieces[] = {
@@ -2413,7 +2413,7 @@ void print_attacked_squares(int side){
 // }
 
 // leaf nodes (number of position reached during the test of the move generator at a given depth)
-long nodes = 0;
+U64 nodes = 0;
 // perft driver
 
 static inline void perft_driver(int depth){
@@ -2487,7 +2487,7 @@ void perft_test(int depth){
 
         //print results summary
         printf("\n    Depth: %d\n", depth);
-        printf("    Nodes: %ld\n", nodes);
+        printf("    Nodes: %lld\n", nodes);
         printf("    Time:  %ldms\n", get_time_ms()-start_time);
 }
 
@@ -2657,6 +2657,9 @@ const int semi_open_file_score = 10;
 // open file score
 const int open_file_score = 15;
 
+// king's shield bonus
+const int king_sheild_bonus = 5;
+
 // set file or rank mask
 U64 set_file_rank_mask(int file_number, int rank_number){
     // file or rank mask
@@ -2801,6 +2804,7 @@ static inline int evaluate(){
             // score material weights
             score += material_score[bb_piece];
 
+            // positional score
             switch (bb_piece){
                 //evaluate white pieces positions
                 case P : 
@@ -2820,10 +2824,48 @@ static inline int evaluate(){
                     if ((white_passed_masks[square] & bitboards[p]) == 0)
                         score += passed_pawn_bonus[get_rank[square]];
                     break;
-                case N : score += knight_score[square]; break;
-                case B : score += bishop_score[square]; break;
-                case R : score += rook_score[square]; break; 
-                case K : score += king_score[square]; break;
+                case N : 
+                    score += knight_score[square]; 
+                    break;
+                case B : 
+                    // positional scores
+                    score += bishop_score[square];
+
+                    // mobility
+                    score += count_bits(get_bishob_attacks(square, occupancies[both]));
+                    break;
+                    
+                case R : 
+
+                    // material+positional score
+                    score += rook_score[square];
+
+                    // semi open file bonus
+                    if ((bitboards[P] & file_masks[square]) == 0)
+                        score += semi_open_file_score;
+                    if ((bitboards[P] & file_masks[square]) == 0 && (bitboards[p] & file_masks[square]) == 0)
+                        score += open_file_score;
+                    break; 
+
+                case Q :
+                    score += count_bits(get_queen_attacks(square, occupancies[both]));
+                    break;
+                case K : 
+                    score += king_score[square]; 
+
+                    // if the board have at least one queen or one rook, we add a penality for a king on an open file
+                    if ((bitboards[r] | bitboards[q]) != 0){                        
+                        // semi open file penality
+                        if ((bitboards[P] & file_masks[square]) == 0)
+                            score -= semi_open_file_score;
+                        // open file penality
+                        if ((bitboards[P] & file_masks[square]) == 0 && (bitboards[p] & file_masks[square]) == 0)
+                            score -= open_file_score;
+                    }
+                    score += count_bits(king_attacks[square] & occupancies[white]) * king_sheild_bonus;
+                    break;
+
+                    
 
                 //evaluate black pieces positions
                 case p : 
@@ -2846,9 +2888,44 @@ static inline int evaluate(){
                     break;
                     
                 case n : score -= knight_score[mirror_score[square]]; break;
-                case b : score -= bishop_score[mirror_score[square]]; break;
-                case r : score -= rook_score[mirror_score[square]]; break;
-                case k : score -= king_score[mirror_score[square]]; break;
+                case b : 
+                    score -= bishop_score[mirror_score[square]]; 
+                    // mobility
+                    score -= count_bits(get_bishob_attacks(square, occupancies[both]));
+
+                    break;
+                case r : 
+                    // positional material score
+                    score -= rook_score[mirror_score[square]]; 
+
+
+                    // semi open file bonus
+                    if ((bitboards[p] & file_masks[square]) == 0)
+                        score -= semi_open_file_score;
+                    //open file bonus
+                    if ((bitboards[p] & file_masks[square]) == 0 && (bitboards[P] & file_masks[square]) == 0)
+                        score -= open_file_score;
+                    break;
+
+                case q :
+                    // mobility
+                    score -= count_bits(get_queen_attacks(square, occupancies[both]));
+                    break;
+                
+                case k : 
+                    score -= king_score[mirror_score[square]]; 
+
+                    if ((bitboards[R] | bitboards[Q]) != 0){                        
+                        // semi open file bonus
+                        if ((bitboards[p] & file_masks[square]) == 0)
+                            score += semi_open_file_score;
+                        //open file bonus
+                        if ((bitboards[p] & file_masks[square]) == 0 && (bitboards[P] & file_masks[square]) == 0)
+                            score += open_file_score;
+                    }
+                    score -= count_bits(king_attacks[square] & occupancies[black]) * king_sheild_bonus;
+
+                break;
 
             }
             //pop ls1b
@@ -2888,8 +2965,7 @@ static inline int evaluate(){
 ================================
 \******************************/
 
-
-#define hash_size 0x400000
+// hash table size, would be around 20MB
 
 // no hash entry found constant
 #define no_hash_entry 100000
@@ -2898,6 +2974,10 @@ static inline int evaluate(){
 #define hash_flag_exact 0
 #define hash_flag_alpha 1
 #define hash_flag_beta 2
+
+
+// number of hash table entries
+int hash_entires = 0;
 
 // transposition table data structure
 typedef struct{
@@ -2908,24 +2988,61 @@ typedef struct{
 } tt; //hash_table
 
 // define TT instance
-tt hash_table[hash_size];
+tt *hash_table = NULL;
 
 // clear hash table
 void clear_hash_table(){
+
+    tt *hash_entry;
+
     // loop over TT elements
-    for (int index = 0; index < hash_size; index++){
+    for (hash_entry = hash_table; hash_entry < hash_table+hash_entires; hash_entry++){
         //
-        hash_table[index].hash_key = 0;
-        hash_table[index].depth = 0;
-        hash_table[index].flag = 0;
-        hash_table[index].score = 0;
+        hash_entry->hash_key = 0;
+        hash_entry->depth = 0;
+        hash_entry->flag = 0;
+        hash_entry->score = 0;
     }
 }
+
+// initialize a new hash table with a predefined size in MB
+void init_hash_table(int mb){
+    int hash_size = 0x100000 * mb;
+
+    hash_entires = hash_size / sizeof(tt);
+
+    // free hash table if not empty
+    if (hash_table != NULL){
+        printf("    Clearing hash memory....\n");
+
+        // free hash table dynamic memory
+        free(hash_table);
+    }
+
+    // allocate memory
+    hash_table = (tt *) malloc(hash_entires * sizeof(tt));
+
+    // if allocation has failed
+    if (hash_table == NULL){
+        printf("    Warning: Couldn't allocate memroy for hash table, trying %dMB...", mb/2);
+
+        // try to allocate with half size
+        init_hash_table(mb / 2);
+        return;
+    }
+    // allocation is succesfull
+    clear_hash_table();
+    printf("    hash table is initialized with %d entries", hash_entires);
+    
+}
+
+// read hash entry data
+
 
 static inline int read_hash_entry(int alpha, int beta, int depth){
     // create a TT instance pointer to point to the hash entry
     // responsible for storing particular hash entry storing the scoring data for the current board position if available
-    tt *hash_entry = &hash_table[hash_key % hash_size];
+    tt *hash_entry = &hash_table[hash_key % hash_entires];
 
     // make sure we are dealing with the exact position we need
     if(hash_entry->hash_key == hash_key){
@@ -2955,7 +3072,7 @@ static inline int read_hash_entry(int alpha, int beta, int depth){
 
 
 static inline void write_hash_entry(int score, int depth, int hash_flag){
-    tt *hash_entry = &hash_table[hash_key % hash_size];
+    tt *hash_entry = &hash_table[hash_key % hash_entires];
 
     if (score < -mate_score) score -=ply;
     if (score > mate_score) score += ply;
@@ -3603,23 +3720,24 @@ void search_position(int depth){
 
         // search completed cleanly — save best move from this iteration
         best_move = pv_table[0][0];
+        if (pv_length[0]){
+            if (score > -mate_value && score < -mate_score)
+                printf("info score mate %d depth %d nodes %lld time %d pv ", -(score + mate_value) / 2 - 1, current_depth, nodes, get_time_ms() - starttime);
 
-        if (score > -mate_value && score < -mate_score)
-            printf("info score mate %d depth %d nodes %ld time %d pv ", -(score + mate_value) / 2 - 1, current_depth, nodes, get_time_ms() - starttime);
+            else if (score > mate_value && score < mate_score)
+                printf("info score mate %d depth %d nodes %lld time %d pv ", (mate_value - score) / 2 + 1, current_depth, nodes, get_time_ms() - starttime);
 
-        else if (score > mate_value && score < mate_score)
-            printf("info score mate %d depth %d nodes %ld time %d pv ", (mate_value - score) / 2 + 1, current_depth, nodes, get_time_ms() - starttime);
+            else
+                printf("info score cp %d depth %d nodes %lld time %d pv ", score, current_depth, nodes, get_time_ms() - starttime);
+            // loop over the moves a PV line
+            for (int count = 0; count < pv_length[0]; count++){
+                // print pv move
+                print_move(pv_table[0][count]);
+                printf(" ");
 
-        else
-            printf("info score cp %d depth %d nodes %ld time %d pv ", score, current_depth, nodes, get_time_ms() - starttime);
-        // loop over the moves a PV line
-        for (int count = 0; count < pv_length[0]; count++){
-            // print pv move
-            print_move(pv_table[0][count]);
-            printf(" ");
-
-            }
-        printf("\n");
+                }
+            printf("\n");
+        }
 
     }
     printf("bestmove ");
@@ -3796,11 +3914,11 @@ void parse_position(char *command)
     print_board();
 }
 
-// parse UCI command "go"
-// parse UCI command "go"
-void parse_go(char *command)
+
+// reset time control variables
+void reset_time_control()
 {
-    // reset all time control variables
+    // reset timing
     quit = 0;
     movestogo = 30;
     movetime = -1;
@@ -3810,6 +3928,12 @@ void parse_go(char *command)
     stoptime = 0;
     timeset = 0;
     stopped = 0;
+}
+// parse UCI command "go"
+void parse_go(char *command)
+{
+    //reset Time control
+    reset_time_control();
 
     // init parameters
     int depth = -1;
@@ -3871,7 +3995,7 @@ void parse_go(char *command)
         time /= movestogo;
         
         // Only subtract overhead if we have enough time
-        if (time > 50)
+        if (time > 1500)
             time -= 50;
         
         stoptime = starttime + time + inc;
@@ -3882,16 +4006,23 @@ void parse_go(char *command)
         depth = 64;
 
     // print debug info
-    printf("time:%d start:%d stop:%d depth:%d timeset:%d\n",
-    time, starttime, stoptime, depth, timeset);
+    printf("time:%d start:%u stop:%u depth:%d timeset:%d\n",
+            time, starttime, stoptime, depth, timeset);
 
     // search position
     search_position(depth);
 }
 
 // main UCI loop
+// main UCI loop
 void uci_loop()
 {
+    // max hash MB
+    int max_hash = 128;
+    
+    // default MB value
+    int mb = 64;
+
     // reset STDIN & STDOUT buffers
     setbuf(stdin, NULL);
     setbuf(stdout, NULL);
@@ -3900,8 +4031,9 @@ void uci_loop()
     char input[2000];
     
     // print engine info
-    printf("id name Morphious\n");
-    printf("id name Bohsen\n");
+    printf("id name BBC\n");
+    printf("id author Code Monkey King\n");
+    printf("option name Hash type spin default 64 min 4 max %d\n", max_hash);
     printf("uciok\n");
     
     // main loop
@@ -3931,26 +4063,23 @@ void uci_loop()
         }
         
         // parse UCI "position" command
-        else if (strncmp(input, "position", 8) == 0){
-            // make sure we are clearing the hash table
-            clear_hash_table();
+        else if (strncmp(input, "position", 8) == 0)
+        {
             // call parse position function
             parse_position(input);
-
-       
-
-        }
         
-        // parse UCI "ucinewgame" command
-        else if (strncmp(input, "ucinewgame", 10) == 0){
-            // make sure we are clearing the hash table
+            // clear hash table
             clear_hash_table();
+        }
+        // parse UCI "ucinewgame" command
+        else if (strncmp(input, "ucinewgame", 10) == 0)
+        {
             // call parse position function
             parse_position("position startpos");
-
-        }
             
-        
+            // clear hash table
+            clear_hash_table();
+        }
         // parse UCI "go" command
         else if (strncmp(input, "go", 2) == 0)
             // call parse go function
@@ -3958,20 +4087,39 @@ void uci_loop()
         
         // parse UCI "quit" command
         else if (strncmp(input, "quit", 4) == 0)
-            // quit from the chess engine program execution
+            // quit from the UCI loop (terminate program)
             break;
+
+        // custom "eval" command for NNUE data generation
+        else if (strncmp(input, "eval", 4) == 0)
+        {
+            printf("eval %d\n", evaluate());
+            fflush(stdout);
+        }
         
         // parse UCI "uci" command
         else if (strncmp(input, "uci", 3) == 0)
         {
             // print engine info
             printf("id name BBC\n");
-            printf("id name Code Monkey King\n");
+            printf("id author Code Monkey King\n");
             printf("uciok\n");
+        }
+        
+        else if (!strncmp(input, "setoption name Hash value ", 26)) {			
+            // init MB
+            sscanf(input,"%*s %*s %*s %*s %d", &mb);
+            
+            // adjust MB if going beyond the alowed bounds
+            if(mb < 4) mb = 4;
+            if(mb >= max_hash) mb = max_hash;
+            
+            // set hash table size in MB
+            printf("    Set hash table size to %dMB\n", mb);
+            init_hash_table(mb);
         }
     }
 }
-
 
 void print_move_score(moves* move_list){
         printf("    Move Scores:\n\n");
@@ -3999,8 +4147,12 @@ void init_all(){
 
     init_sliders_attacks(bishob);
     init_sliders_attacks(rook);
+    
     init_hash_keys();
+
     initialize_evaluation_masks();
+
+    init_hash_table(12);
 }
 
  
@@ -4011,8 +4163,8 @@ int main(){
     int debug = 0;
 
     // if debug mode
-    if(debug){
-        parse_fen("8/p1p5/8/8/8/8/5P1P/8 w - -");
+    if (debug){
+        parse_fen("6k1/ppppprbp/8/8/8/8/PPPPPRBP/6K1 w - -");
         print_board();
         printf("score: %d\n", evaluate());
         // search_position(50);

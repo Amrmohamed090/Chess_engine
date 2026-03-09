@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chess Engine Match</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #312e2b;
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            gap: 30px;
+        }
+        .board-section { flex: 0 0 auto; }
+        #board { width: 560px; }
+        .info-section { flex: 1; min-width: 300px; }
+        .panel {
+            background: #262421;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        h3 {
+            margin: 0 0 15px 0;
+            color: #bababa;
+            font-size: 14px;
+            text-transform: uppercase;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #bababa;
+            font-size: 14px;
+        }
+        .mode-toggle {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            background: #1a1917;
+            color: #bababa;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .mode-btn.active {
+            background: #629924;
+            color: #fff;
+            font-weight: bold;
+        }
+        .mode-btn:hover:not(.active) { background: #2a2826; }
+        input[type="text"], input[type="number"], select {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            background: #1a1917;
+            color: #fff;
+            font-size: 14px;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+        }
+        select option { background: #1a1917; }
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        .btn-start { background: #629924; color: #fff; }
+        .btn-start:hover { background: #7cb32a; }
+        .btn-stop { background: #b33430; color: #fff; }
+        .btn-stop:hover { background: #c43c38; }
+        .btn-reset { background: #4a4a4a; color: #fff; }
+        .btn-reset:hover { background: #5a5a5a; }
+        .btn-pgn { background: #2a6496; color: #fff; }
+        .btn-pgn:hover { background: #3276ad; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status {
+            padding: 15px;
+            border-radius: 4px;
+            background: #1a1917;
+            font-size: 16px;
+        }
+        .status.thinking { color: #f0c36d; }
+        .status.your-turn { color: #81b64c; font-weight: bold; }
+        .status.ended { color: #81b64c; }
+        .players {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .player {
+            padding: 8px 12px;
+            background: #1a1917;
+            border-radius: 4px;
+        }
+        .player.white::before { content: "○ "; }
+        .player.black::before { content: "● "; }
+        .player.active { background: #629924; }
+        .moves-list {
+            background: #1a1917;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .move-number { color: #888; margin-right: 5px; }
+        .move {
+            color: #fff;
+            margin-right: 15px;
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        .move:hover { background: #3a3a3a; }
+        .move.current { background: #629924; }
+        .nav-controls {
+            display: flex;
+            justify-content: center;
+            gap: 5px;
+            margin-top: 15px;
+        }
+        .nav-btn {
+            background: #262421;
+            color: #bababa;
+            border: none;
+            border-radius: 4px;
+            padding: 10px 20px;
+            font-size: 18px;
+            cursor: pointer;
+            min-width: 50px;
+        }
+        .nav-btn:hover { background: #3a3a3a; color: #fff; }
+        .nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .nav-btn:disabled:hover { background: #262421; color: #bababa; }
+
+        /* Promotion dialog */
+        #promotionOverlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 999;
+            align-items: center;
+            justify-content: center;
+        }
+        #promotionOverlay.show { display: flex; }
+        #promotionDialog {
+            background: #262421;
+            border-radius: 8px;
+            padding: 24px;
+            text-align: center;
+        }
+        #promotionDialog h3 { margin-bottom: 16px; font-size: 16px; }
+        .promo-pieces {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        .promo-piece {
+            width: 70px;
+            height: 70px;
+            background: #1a1917;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid transparent;
+            transition: border-color 0.15s;
+        }
+        .promo-piece:hover { border-color: #629924; }
+        .promo-piece img { width: 56px; height: 56px; }
+
+        /* Engine logs */
+        .logs-section {
+            max-width: 1200px;
+            margin: 0 auto 20px auto;
+            display: flex;
+            gap: 20px;
+        }
+        .log-panel {
+            flex: 1;
+            background: #262421;
+            border-radius: 8px;
+            padding: 15px;
+            min-width: 0;
+        }
+        .log-panel h3 { margin-bottom: 10px; }
+        .log-box {
+            background: #0d0d0d;
+            border-radius: 4px;
+            padding: 10px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .log-line {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-send { color: #629924; }
+        .log-recv { color: #bababa; }
+        .log-recv.log-info { color: #666; }
+
+        /* Tab bar */
+        .tab-bar {
+            max-width: 1200px;
+            margin: 0 auto 20px auto;
+            display: flex;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #1a1917;
+        }
+        .tab-btn {
+            padding: 12px 32px;
+            border: none;
+            background: #1a1917;
+            color: #bababa;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin: 0;
+            border-radius: 0;
+        }
+        .tab-btn.active { background: #629924; color: #fff; }
+        .tab-btn:hover:not(.active) { background: #2a2826; }
+
+        /* Evaluation */
+        .eval-layout { display: flex; gap: 20px; align-items: flex-start; }
+        .eval-config { flex: 0 0 300px; }
+        .eval-results { flex: 1; min-width: 0; }
+        .eval-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .eval-table th {
+            text-align: left; padding: 8px 12px; color: #bababa;
+            border-bottom: 1px solid #3a3a3a; font-size: 11px; text-transform: uppercase;
+        }
+        .eval-table td { padding: 8px 12px; border-bottom: 1px solid #1a1917; }
+        .eval-table tr.e1-win  { background: rgba(98,153,36,0.15); }
+        .eval-table tr.e1-draw { background: rgba(240,195,109,0.10); }
+        .eval-table tr.e1-loss { background: rgba(179,52,48,0.15); }
+        .r-win  { color: #81b64c; font-weight: bold; }
+        .r-draw { color: #f0c36d; font-weight: bold; }
+        .r-loss { color: #e84c4c; font-weight: bold; }
+        .score-row { display: flex; align-items: center; gap: 12px; }
+        .score-engine { flex: 0 0 auto; min-width: 120px; }
+        .score-engine.right { text-align: right; }
+        .score-bar-wrap { flex: 1; height: 10px; background: #1a1917; border-radius: 5px; overflow: hidden; }
+        .score-bar-fill { height: 100%; background: #629924; border-radius: 5px; transition: width 0.4s; }
+        .score-pts { font-size: 22px; font-weight: bold; }
+        .score-wdl { font-size: 12px; color: #888; }
+    </style>
+</head>
+<body>
+    <!-- Tab bar -->
+    <div class="tab-bar">
+        <button class="tab-btn active" id="tabMatchBtn" onclick="switchTab('match')">Match</button>
+        <button class="tab-btn" id="tabEvalBtn" onclick="switchTab('eval')">Evaluation</button>
+    </div>
+
+    <!-- Match section -->
+    <div id="matchSection">
+
+    <!-- Promotion dialog -->
+    <div id="promotionOverlay">
+        <div id="promotionDialog">
+            <h3>Promote pawn to:</h3>
+            <div class="promo-pieces" id="promoPieces"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="board-section">
+            <div id="board"></div>
+            <div class="nav-controls">
+                <button class="nav-btn" id="btnFirst" onclick="goToMove(0)" title="First move">&laquo;</button>
+                <button class="nav-btn" id="btnPrev" onclick="goToMove(viewIndex - 1)" title="Previous">&lsaquo;</button>
+                <button class="nav-btn" id="btnNext" onclick="goToMove(viewIndex + 1)" title="Next">&rsaquo;</button>
+                <button class="nav-btn" id="btnLast" onclick="goToLive()" title="Last move">&raquo;</button>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <div class="panel">
+                <h3>Game Mode</h3>
+                <div class="mode-toggle">
+                    <button class="mode-btn active" id="modeEngineBtn" onclick="setMode('engine')">Engine vs Engine</button>
+                    <button class="mode-btn" id="modeHumanBtn" onclick="setMode('human')">Play vs Engine</button>
+                </div>
+
+                <!-- Engine vs Engine inputs -->
+                <div id="engineModeInputs">
+                    <label>White Engine:</label>
+                    <input type="text" id="engine1" placeholder="Path to white engine (.exe)">
+                    <label>Black Engine:</label>
+                    <input type="text" id="engine2" placeholder="Path to black engine (.exe)">
+                </div>
+
+                <!-- Human vs Engine inputs -->
+                <div id="humanModeInputs" style="display:none">
+                    <label>Engine Path:</label>
+                    <input type="text" id="enginePath" placeholder="Path to engine (.exe)">
+                    <label>Play as:</label>
+                    <select id="humanColor">
+                        <option value="white">White (move first)</option>
+                        <option value="black">Black (engine moves first)</option>
+                    </select>
+                </div>
+
+                <label>Time per move (ms):</label>
+                <input type="number" id="movetime" value="500" min="100" max="60000">
+            </div>
+
+            <div class="panel">
+                <button class="btn-start" id="startBtn" onclick="startGame()">Start Game</button>
+                <button class="btn-stop" id="stopBtn" onclick="stopGame()" disabled>Stop</button>
+                <button class="btn-reset" onclick="resetGame()">Reset</button>
+                <button class="btn-pgn" id="pgnBtn" onclick="exportPgn()">Export PGN</button>
+            </div>
+
+            <div class="panel">
+                <h3>Players</h3>
+                <div class="players">
+                    <span class="player white" id="whitePlayer">White</span>
+                    <span class="player black" id="blackPlayer">Black</span>
+                </div>
+                <div class="status" id="status">Configure and click Start</div>
+            </div>
+
+            <div class="panel">
+                <h3>Moves</h3>
+                <div class="moves-list" id="movesList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Engine Logs -->
+    <div class="logs-section">
+        <div class="log-panel">
+            <h3 id="whiteLogTitle">White Engine Logs</h3>
+            <div class="log-box" id="whiteLog"></div>
+        </div>
+        <div class="log-panel">
+            <h3 id="blackLogTitle">Black Engine Logs</h3>
+            <div class="log-box" id="blackLog"></div>
+        </div>
+    </div>
+
+    </div> <!-- end matchSection -->
+
+    <!-- Evaluation section -->
+    <div id="evalSection" style="display:none; max-width:1200px; margin:0 auto;">
+        <div style="display:flex; gap:20px; align-items:flex-start;">
+
+            <!-- Config panel -->
+            <div style="flex:0 0 260px;">
+                <div class="panel">
+                    <h3>Engines</h3>
+                    <label>Engine 1:</label>
+                    <input type="text" id="evalEngine1" placeholder="Path to engine 1">
+                    <label>Engine 2:</label>
+                    <input type="text" id="evalEngine2" placeholder="Path to engine 2">
+                    <label>Pairs of games:</label>
+                    <input type="number" id="evalNumPairs" value="4" min="1" max="200">
+
+                    <h3>Time Control</h3>
+                    <div class="mode-toggle" style="margin-bottom:15px;">
+                        <button class="mode-btn active" id="evalTimeSingleBtn" onclick="setEvalTimeMode('single')">Single</button>
+                        <button class="mode-btn" id="evalTimeBundleBtn" onclick="setEvalTimeMode('bundle')">Bundle</button>
+                    </div>
+                    <div id="evalSingleInputs">
+                        <label>Time per move (ms):</label>
+                        <input type="number" id="evalMovetime" value="500" min="50">
+                    </div>
+                    <div id="evalBundleInputs" style="display:none;">
+                        <label>Min time (ms):</label>
+                        <input type="number" id="evalMinTime" value="100" min="50">
+                        <label>Max time (ms):</label>
+                        <input type="number" id="evalMaxTime" value="10000" min="50">
+                        <div id="evalSchedulePreview" style="font-size:12px;color:#888;margin-top:-10px;margin-bottom:10px;line-height:1.5;"></div>
+                    </div>
+
+                    <button class="btn-start" id="evalStartBtn" onclick="startEval()">Start Evaluation</button>
+                    <button class="btn-stop" id="evalStopBtn" onclick="stopEval()" disabled>Stop</button>
+                </div>
+            </div>
+
+            <!-- Live board -->
+            <div style="flex:0 0 390px; min-width:0;">
+                <div class="panel" style="padding:15px;">
+                    <!-- Black player -->
+                    <div id="evalBlackName" style="font-size:14px;font-weight:bold;margin-bottom:8px;padding:6px 10px;background:#1a1917;border-radius:4px;">
+                        &#9679; —
+                    </div>
+                    <div id="evalBoard" style="width:360px;"></div>
+                    <!-- White player -->
+                    <div id="evalWhiteName" style="font-size:14px;font-weight:bold;margin-top:8px;padding:6px 10px;background:#1a1917;border-radius:4px;">
+                        &#9675; —
+                    </div>
+                    <!-- Move list -->
+                    <div id="evalMoveList" style="margin-top:10px;background:#1a1917;border-radius:4px;padding:8px 10px;max-height:80px;overflow-y:auto;overflow-x:hidden;font-family:monospace;font-size:13px;line-height:1.7;color:#ccc;word-break:break-word;"></div>
+                </div>
+            </div>
+
+            <!-- Results panel -->
+            <div style="flex:1; min-width:0;">
+
+                <!-- Score -->
+                <div class="panel">
+                    <h3>Score</h3>
+                    <div id="evalScoreContent" style="color:#666;font-size:14px;">No games played yet</div>
+                </div>
+
+                <!-- Status + progress -->
+                <div class="panel">
+                    <div id="evalStatusMsg" style="font-size:15px;color:#bababa;">Configure engines and click Start Evaluation</div>
+                    <div id="evalProgressBar" style="margin-top:10px;"></div>
+                </div>
+
+                <!-- Results table -->
+                <div class="panel">
+                    <h3>Game Results</h3>
+                    <div id="evalResultsContainer" style="overflow-x:auto;">
+                        <p style="color:#666;font-size:14px;margin:0;">No games played yet</p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chess.js@0.12.0/chess.min.js"></script>
+    <script>
+        var board = null;
+        var polling = null;
+        var logPolling = null;
+        var currentMoves = [];
+        var fenHistory = ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'];
+        var viewIndex = 0;
+        var isLive = true;
+        var currentState = null;
+
+        // Human mode state
+        var isHumanMode = false;
+        var humanSide = 'white';
+        var waitingForHuman = false;
+        var pendingSource = null;
+        var pendingTarget = null;
+        var pendingMoveSubmitted = false;
+
+        // Log state
+        var lastWhiteLogTail = '';
+        var lastBlackLogTail = '';
+
+        function initBoard(orientation) {
+            if (board) board.destroy();
+            board = Chessboard('board', {
+                position: 'start',
+                pieceTheme: '/pieces/{piece}.png',
+                draggable: true,
+                orientation: orientation || 'white',
+                onDragStart: onDragStart,
+                onDrop: onDrop,
+                onSnapEnd: onSnapEnd
+            });
+        }
+
+        initBoard('white');
+
+        // ---- Mode switching ----
+
+        function setMode(mode) {
+            isHumanMode = (mode === 'human');
+            document.getElementById('modeEngineBtn').classList.toggle('active', !isHumanMode);
+            document.getElementById('modeHumanBtn').classList.toggle('active', isHumanMode);
+            document.getElementById('engineModeInputs').style.display = isHumanMode ? 'none' : 'block';
+            document.getElementById('humanModeInputs').style.display = isHumanMode ? 'block' : 'none';
+        }
+
+        // ---- Drag-and-drop handlers ----
+
+        function onDragStart(source, piece) {
+            if (!isHumanMode || !waitingForHuman || !isLive) return false;
+            if (humanSide === 'white' && piece.startsWith('b')) return false;
+            if (humanSide === 'black' && piece.startsWith('w')) return false;
+            return true;
+        }
+
+        function onDrop(source, target) {
+            if (!isHumanMode || !waitingForHuman) return 'snapback';
+            if (source === target) return 'snapback';
+
+            var game = new Chess();
+            for (var i = 0; i < currentMoves.length; i++) {
+                game.move(currentMoves[i], {sloppy: true});
+            }
+
+            var piece = game.get(source);
+            if (!piece) return 'snapback';
+
+            var isPromotion = piece.type === 'p' &&
+                ((piece.color === 'w' && target[1] === '8') ||
+                 (piece.color === 'b' && target[1] === '1'));
+
+            if (isPromotion) {
+                var testResult = game.move({from: source, to: target, promotion: 'q'});
+                if (!testResult) return 'snapback';
+                pendingSource = source;
+                pendingTarget = target;
+                showPromotionDialog(piece.color);
+                return 'snapback';
+            }
+
+            var result = game.move({from: source, to: target});
+            if (!result) return 'snapback';
+
+            submitHumanMove(source + target);
+            pendingMoveSubmitted = true;
+        }
+
+        function onSnapEnd() {
+            if (!pendingMoveSubmitted) {
+                board.position(fenHistory[viewIndex]);
+            }
+        }
+
+        // ---- Promotion dialog ----
+
+        function showPromotionDialog(color) {
+            var pieces = [
+                {code: 'q', name: 'Queen'},
+                {code: 'r', name: 'Rook'},
+                {code: 'b', name: 'Bishop'},
+                {code: 'n', name: 'Knight'}
+            ];
+            var html = '';
+            pieces.forEach(function(p) {
+                var imgCode = (color === 'w' ? 'w' : 'b') + p.code.toUpperCase();
+                html += '<div class="promo-piece" data-piece="' + p.code + '" onclick="selectPromotion(this.dataset.piece)" title="' + p.name + '">';
+                html += '<img src="/pieces/' + imgCode + '.png" alt="' + p.name + '">';
+                html += '</div>';
+            });
+            document.getElementById('promoPieces').innerHTML = html;
+            document.getElementById('promotionOverlay').classList.add('show');
+        }
+
+        function selectPromotion(piece) {
+            document.getElementById('promotionOverlay').classList.remove('show');
+            if (!pendingSource || !pendingTarget) return;
+            var move = pendingSource + pendingTarget + piece;
+            pendingSource = null;
+            pendingTarget = null;
+            submitHumanMove(move);
+            pendingMoveSubmitted = true;
+        }
+
+        function submitHumanMove(uciMove) {
+            fetch('/human_move', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({move: uciMove})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    pendingMoveSubmitted = false;
+                    board.position(fenHistory[viewIndex]);
+                }
+            })
+            .catch(function() {
+                pendingMoveSubmitted = false;
+                board.position(fenHistory[viewIndex]);
+            });
+        }
+
+        // ---- FEN history & navigation ----
+
+        function buildFenHistory(moves) {
+            fenHistory = ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'];
+            var tempBoard = new Chess();
+            for (var i = 0; i < moves.length; i++) {
+                tempBoard.move(moves[i], {sloppy: true});
+                fenHistory.push(tempBoard.fen());
+            }
+        }
+
+        function goToMove(index) {
+            if (index < 0) index = 0;
+            if (index > currentMoves.length) index = currentMoves.length;
+            viewIndex = index;
+            isLive = (viewIndex === currentMoves.length);
+            board.position(fenHistory[viewIndex]);
+            updateMovesList();
+            updateNavButtons();
+        }
+
+        function goToLive() {
+            isLive = true;
+            viewIndex = currentMoves.length;
+            board.position(fenHistory[viewIndex]);
+            updateMovesList();
+            updateNavButtons();
+        }
+
+        function updateNavButtons() {
+            document.getElementById('btnFirst').disabled = (viewIndex === 0);
+            document.getElementById('btnPrev').disabled = (viewIndex === 0);
+            document.getElementById('btnNext').disabled = (viewIndex >= currentMoves.length);
+            document.getElementById('btnLast').disabled = isLive;
+        }
+
+        function updateMovesList() {
+            var movesHtml = '';
+            var sanMoves = currentState ? currentState.san_moves : [];
+            for (var i = 0; i < sanMoves.length; i += 2) {
+                var moveNum = Math.floor(i / 2) + 1;
+                movesHtml += '<span class="move-number">' + moveNum + '.</span>';
+                var isCurrent1 = (i + 1 === viewIndex);
+                movesHtml += '<span class="move' + (isCurrent1 ? ' current' : '') + '" onclick="goToMove(' + (i + 1) + ')">' + sanMoves[i] + '</span>';
+                if (i + 1 < sanMoves.length) {
+                    var isCurrent2 = (i + 2 === viewIndex);
+                    movesHtml += '<span class="move' + (isCurrent2 ? ' current' : '') + '" onclick="goToMove(' + (i + 2) + ')">' + sanMoves[i + 1] + '</span>';
+                }
+            }
+            document.getElementById('movesList').innerHTML = movesHtml;
+            var currentEl = document.querySelector('.move.current');
+            if (currentEl) currentEl.scrollIntoView({block: 'nearest'});
+        }
+
+        // ---- State polling ----
+
+        function updateState(state) {
+            currentState = state;
+            var movesChanged = (JSON.stringify(currentMoves) !== JSON.stringify(state.moves));
+
+            if (movesChanged) {
+                currentMoves = state.moves.slice();
+                buildFenHistory(currentMoves);
+                if (isLive) viewIndex = currentMoves.length;
+                if (pendingMoveSubmitted) pendingMoveSubmitted = false;
+            }
+
+            if (!pendingMoveSubmitted) {
+                board.position(fenHistory[viewIndex]);
+            }
+
+            waitingForHuman = state.waiting_for_human || false;
+            humanSide = state.human_side || 'white';
+
+            var statusEl = document.getElementById('status');
+            var statusText = state.message;
+            if (!isLive && currentMoves.length > 0) {
+                statusText = 'Viewing move ' + viewIndex + ' of ' + currentMoves.length;
+            }
+            statusEl.textContent = statusText;
+            statusEl.className = 'status';
+            if (waitingForHuman && isLive) {
+                statusEl.classList.add('your-turn');
+            } else if (state.status === 'playing') {
+                statusEl.classList.add('thinking');
+            } else if (state.status === 'ended') {
+                statusEl.classList.add('ended');
+            }
+
+            var whiteName = state.white_name || 'White';
+            var blackName = state.black_name || 'Black';
+            document.getElementById('whitePlayer').textContent = whiteName;
+            document.getElementById('blackPlayer').textContent = blackName;
+            document.getElementById('whiteLogTitle').textContent = whiteName + ' Logs';
+            document.getElementById('blackLogTitle').textContent = blackName + ' Logs';
+
+            var viewFen = fenHistory[viewIndex];
+            var isWhiteTurn = viewFen.split(' ')[1] === 'w';
+            document.getElementById('whitePlayer').classList.toggle('active', isWhiteTurn && state.running && isLive);
+            document.getElementById('blackPlayer').classList.toggle('active', !isWhiteTurn && state.running && isLive);
+
+            updateMovesList();
+            updateNavButtons();
+
+            document.getElementById('startBtn').disabled = state.running;
+            document.getElementById('stopBtn').disabled = !state.running;
+        }
+
+        function pollState() {
+            fetch('/state')
+                .then(r => r.json())
+                .then(updateState)
+                .catch(err => console.error('Poll error:', err));
+        }
+
+        // ---- Log polling ----
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function updateLogBox(elId, lines, lastTail) {
+            var tail = lines.length > 0 ? lines[lines.length - 1] : '';
+            if (tail === lastTail) return;
+            var el = document.getElementById(elId);
+            var wasAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 30;
+            var html = '';
+            lines.forEach(function(entry) {
+                var cls = 'log-recv';
+                if (entry.startsWith('>>')) {
+                    cls = 'log-send';
+                } else if (entry.startsWith('<< info')) {
+                    cls = 'log-recv log-info';
+                }
+                html += '<div class="log-line ' + cls + '">' + escapeHtml(entry) + '</div>';
+            });
+            el.innerHTML = html;
+            if (wasAtBottom) el.scrollTop = el.scrollHeight;
+        }
+
+        function pollLogs() {
+            fetch('/logs')
+                .then(r => r.json())
+                .then(function(data) {
+                    updateLogBox('whiteLog', data.white, lastWhiteLogTail);
+                    updateLogBox('blackLog', data.black, lastBlackLogTail);
+                    lastWhiteLogTail = data.white.length > 0 ? data.white[data.white.length - 1] : '';
+                    lastBlackLogTail = data.black.length > 0 ? data.black[data.black.length - 1] : '';
+                })
+                .catch(err => console.error('Log poll error:', err));
+        }
+
+        // ---- Game controls ----
+
+        function startPolling() {
+            if (polling) clearInterval(polling);
+            if (logPolling) clearInterval(logPolling);
+            polling = setInterval(pollState, 200);
+            logPolling = setInterval(pollLogs, 300);
+        }
+
+        function stopPolling() {
+            if (polling) { clearInterval(polling); polling = null; }
+            if (logPolling) { clearInterval(logPolling); logPolling = null; }
+        }
+
+        function startGame() {
+            var movetime = parseInt(document.getElementById('movetime').value);
+
+            currentMoves = [];
+            fenHistory = ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'];
+            viewIndex = 0;
+            isLive = true;
+            pendingMoveSubmitted = false;
+            lastWhiteLogTail = '';
+            lastBlackLogTail = '';
+            document.getElementById('whiteLog').innerHTML = '';
+            document.getElementById('blackLog').innerHTML = '';
+
+            if (isHumanMode) {
+                var enginePath = document.getElementById('enginePath').value.trim();
+                var color = document.getElementById('humanColor').value;
+                if (!enginePath) { alert('Please enter the engine path'); return; }
+
+                humanSide = color;
+                initBoard(color);
+
+                fetch('/start_human', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({engine: enginePath, human_side: color, movetime: movetime})
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) { alert(data.error); return; }
+                    startPolling();
+                });
+            } else {
+                var engine1 = document.getElementById('engine1').value.trim();
+                var engine2 = document.getElementById('engine2').value.trim();
+                if (!engine1 || !engine2) { alert('Please enter paths to both engines'); return; }
+
+                initBoard('white');
+
+                fetch('/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({engine1: engine1, engine2: engine2, movetime: movetime})
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) { alert(data.error); return; }
+                    startPolling();
+                });
+            }
+        }
+
+        function stopGame() {
+            fetch('/stop', {method: 'POST'})
+                .then(r => r.json())
+                .then(pollState);
+        }
+
+        function resetGame() {
+            pendingMoveSubmitted = false;
+            pendingSource = null;
+            pendingTarget = null;
+            document.getElementById('promotionOverlay').classList.remove('show');
+
+            fetch('/reset', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    currentMoves = [];
+                    fenHistory = ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'];
+                    viewIndex = 0;
+                    isLive = true;
+                    waitingForHuman = false;
+                    lastWhiteLogTail = '';
+                    lastBlackLogTail = '';
+                    document.getElementById('whiteLog').innerHTML = '';
+                    document.getElementById('blackLog').innerHTML = '';
+                    initBoard('white');
+                    updateState(data);
+                    stopPolling();
+                });
+        }
+
+        // ---- PGN export ----
+
+        function exportPgn() {
+            fetch('/pgn')
+                .then(r => r.text())
+                .then(function(pgn) {
+                    return navigator.clipboard.writeText(pgn);
+                })
+                .then(function() {
+                    var btn = document.getElementById('pgnBtn');
+                    var orig = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(function() { btn.textContent = orig; }, 1500);
+                })
+                .catch(err => alert('Failed to copy PGN: ' + err));
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', function(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+            if (document.getElementById('promotionOverlay').classList.contains('show')) return;
+            if (e.key === 'ArrowLeft') { e.preventDefault(); goToMove(viewIndex - 1); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); goToMove(viewIndex + 1); }
+            else if (e.key === 'ArrowUp' || e.key === 'Home') { e.preventDefault(); goToMove(0); }
+            else if (e.key === 'ArrowDown' || e.key === 'End') { e.preventDefault(); goToLive(); }
+        });
+
+        pollState();
+
+        // ==== Tab switching ====
+
+        var evalBoard = null;
+
+        function switchTab(tab) {
+            var isMatch = (tab === 'match');
+            document.getElementById('matchSection').style.display = isMatch ? '' : 'none';
+            document.getElementById('evalSection').style.display = isMatch ? 'none' : '';
+            document.getElementById('tabMatchBtn').classList.toggle('active', isMatch);
+            document.getElementById('tabEvalBtn').classList.toggle('active', !isMatch);
+            if (!isMatch && !evalBoard) {
+                evalBoard = Chessboard('evalBoard', {
+                    position: 'start',
+                    pieceTheme: '/pieces/{piece}.png',
+                    draggable: false
+                });
+            }
+        }
+
+        // ==== Evaluation ====
+
+        var evalPolling = null;
+        var evalTimeMode = 'single';
+        var lastEvalGamesLen = -1;
+
+        function setEvalTimeMode(mode) {
+            evalTimeMode = mode;
+            document.getElementById('evalTimeSingleBtn').classList.toggle('active', mode === 'single');
+            document.getElementById('evalTimeBundleBtn').classList.toggle('active', mode === 'bundle');
+            document.getElementById('evalSingleInputs').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('evalBundleInputs').style.display = mode === 'bundle' ? '' : 'none';
+            updateSchedulePreview();
+        }
+
+        function calcBundleTimes() {
+            var n = Math.max(1, parseInt(document.getElementById('evalNumPairs').value) || 4);
+            var minT = parseInt(document.getElementById('evalMinTime').value) || 100;
+            var maxT = parseInt(document.getElementById('evalMaxTime').value) || 10000;
+            if (n === 1) return [minT];
+            var times = [];
+            for (var i = 0; i < n; i++) {
+                times.push(Math.round(minT + i * (maxT - minT) / (n - 1)));
+            }
+            return times;
+        }
+
+        function updateSchedulePreview() {
+            if (evalTimeMode !== 'bundle') return;
+            var times = calcBundleTimes();
+            var preview = times.map(function(t) { return t + 'ms'; }).join(' → ');
+            document.getElementById('evalSchedulePreview').textContent = 'Schedule: ' + preview;
+        }
+
+        ['evalNumPairs', 'evalMinTime', 'evalMaxTime'].forEach(function(id) {
+            document.getElementById(id).addEventListener('input', updateSchedulePreview);
+        });
+
+        function startEval() {
+            var engine1 = document.getElementById('evalEngine1').value.trim();
+            var engine2 = document.getElementById('evalEngine2').value.trim();
+            var numPairs = Math.max(1, parseInt(document.getElementById('evalNumPairs').value) || 4);
+            if (!engine1 || !engine2) { alert('Please enter both engine paths'); return; }
+
+            var body = { engine1: engine1, engine2: engine2, num_pairs: numPairs, time_mode: evalTimeMode };
+            if (evalTimeMode === 'single') {
+                body.movetime = parseInt(document.getElementById('evalMovetime').value) || 500;
+            } else {
+                body.min_time = parseInt(document.getElementById('evalMinTime').value) || 100;
+                body.max_time = parseInt(document.getElementById('evalMaxTime').value) || 10000;
+            }
+
+            fetch('/eval/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            })
+            .then(r => r.json())
+            .then(function(data) {
+                if (data.error) { alert(data.error); return; }
+                document.getElementById('evalStartBtn').disabled = true;
+                document.getElementById('evalStopBtn').disabled = false;
+                lastEvalGamesLen = -1;
+                if (evalPolling) clearInterval(evalPolling);
+                evalPolling = setInterval(pollEvalState, 500);
+            });
+        }
+
+        function stopEval() {
+            fetch('/eval/stop', { method: 'POST' });
+        }
+
+        function pollEvalState() {
+            fetch('/eval/state')
+                .then(r => r.json())
+                .then(updateEvalUI)
+                .catch(function(err) { console.error('Eval poll error:', err); });
+        }
+
+        function fmtScore(s) {
+            return (s % 1 === 0) ? String(s) : s.toFixed(1);
+        }
+
+        function updateEvalUI(d) {
+            // Live board
+            if (evalBoard && d.current_fen) {
+                evalBoard.position(d.current_fen, false);
+            }
+            document.getElementById('evalWhiteName').innerHTML = '&#9675; ' + escapeHtml(d.current_white || '—');
+            document.getElementById('evalBlackName').innerHTML = '&#9679; ' + escapeHtml(d.current_black || '—');
+
+            // Move list
+            var moveListEl = document.getElementById('evalMoveList');
+            var sanMoves = d.current_san_moves || [];
+            if (sanMoves.length === 0) {
+                moveListEl.textContent = '—';
+            } else {
+                var html = '';
+                for (var i = 0; i < sanMoves.length; i += 2) {
+                    html += '<span style="color:#666;">' + (Math.floor(i/2)+1) + '.</span> ' +
+                            sanMoves[i] + (sanMoves[i+1] ? ' ' + sanMoves[i+1] + ' ' : ' ');
+                }
+                moveListEl.innerHTML = html;
+                moveListEl.scrollTop = moveListEl.scrollHeight;
+            }
+
+            // Status
+            var msgEl = document.getElementById('evalStatusMsg');
+            msgEl.textContent = d.message || '';
+            msgEl.style.color = d.status === 'running' ? '#f0c36d' : (d.status === 'done' ? '#81b64c' : '#bababa');
+
+            // Progress bar
+            var pbEl = document.getElementById('evalProgressBar');
+            if (d.running && d.total_pairs > 0) {
+                var done = (d.current_pair - 1) * 2 + (d.current_game - 1);
+                var total = d.total_pairs * 2;
+                var pct = Math.round(done / total * 100);
+                pbEl.innerHTML =
+                    '<div style="background:#1a1917;border-radius:4px;height:6px;overflow:hidden;margin-bottom:4px;">' +
+                    '<div style="height:100%;width:' + pct + '%;background:#629924;transition:width 0.4s;"></div></div>' +
+                    '<div style="font-size:12px;color:#888;">' + done + ' / ' + total + ' games</div>';
+            } else {
+                pbEl.innerHTML = '';
+            }
+
+            // Score
+            var scoreEl = document.getElementById('evalScoreContent');
+            if (d.engine1_name && d.games.length > 0) {
+                var totalG = d.games.length;
+                var e1Pct = totalG > 0 ? (d.engine1_score / totalG * 100) : 50;
+                scoreEl.innerHTML =
+                    '<div class="score-row">' +
+                        '<div class="score-engine">' +
+                            '<div style="font-weight:bold;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;" title="' + escapeHtml(d.engine1_name) + '">' + escapeHtml(d.engine1_name) + '</div>' +
+                            '<div class="score-pts" style="color:#81b64c;">' + fmtScore(d.engine1_score) + '</div>' +
+                            '<div class="score-wdl">' + d.engine1_wins + 'W ' + d.engine1_draws + 'D ' + d.engine1_losses + 'L</div>' +
+                        '</div>' +
+                        '<div class="score-bar-wrap"><div class="score-bar-fill" style="width:' + e1Pct + '%;"></div></div>' +
+                        '<div class="score-engine right">' +
+                            '<div style="font-weight:bold;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;" title="' + escapeHtml(d.engine2_name) + '">' + escapeHtml(d.engine2_name) + '</div>' +
+                            '<div class="score-pts" style="color:#e84c4c;">' + fmtScore(d.engine2_score) + '</div>' +
+                            '<div class="score-wdl">' + d.engine1_losses + 'W ' + d.engine1_draws + 'D ' + d.engine1_wins + 'L</div>' +
+                        '</div>' +
+                    '</div>';
+            } else if (!d.engine1_name) {
+                scoreEl.innerHTML = '<span style="color:#666;font-size:14px;">No games played yet</span>';
+            }
+
+            // Table (only re-render when count changes)
+            if (d.games.length !== lastEvalGamesLen) {
+                lastEvalGamesLen = d.games.length;
+                renderEvalTable(d);
+            }
+
+            // Buttons
+            document.getElementById('evalStartBtn').disabled = d.running;
+            document.getElementById('evalStopBtn').disabled = !d.running;
+
+            // Stop polling when done
+            if (!d.running && evalPolling) {
+                clearInterval(evalPolling);
+                evalPolling = null;
+            }
+        }
+
+        function renderEvalTable(d) {
+            var el = document.getElementById('evalResultsContainer');
+            if (d.games.length === 0) {
+                el.innerHTML = '<p style="color:#666;font-size:14px;margin:0;">No games played yet</p>';
+                return;
+            }
+            var e1 = d.engine1_name;
+            var rows = d.games.slice().reverse().map(function(g) {
+                var isE1White = (g.white === e1);
+                var rowCls, resCls, resLabel;
+                if (g.winner === null) {
+                    rowCls = 'e1-draw'; resCls = 'r-draw';
+                } else if ((g.winner === 'white' && isE1White) || (g.winner === 'black' && !isE1White)) {
+                    rowCls = 'e1-win'; resCls = 'r-win';
+                } else {
+                    rowCls = 'e1-loss'; resCls = 'r-loss';
+                }
+                return '<tr class="' + rowCls + '">' +
+                    '<td>' + g.num + '</td>' +
+                    '<td>' + g.pair + '-' + g.game_in_pair + '</td>' +
+                    '<td>' + g.movetime + '</td>' +
+                    '<td>' + escapeHtml(g.white) + '</td>' +
+                    '<td>' + escapeHtml(g.black) + '</td>' +
+                    '<td><span class="' + resCls + '">' + g.result + '</span></td>' +
+                    '<td style="color:#888;font-size:12px;">' + escapeHtml(g.reason) + '</td>' +
+                    '<td>' + g.num_moves + '</td>' +
+                    '</tr>';
+            }).join('');
+            el.innerHTML =
+                '<table class="eval-table">' +
+                '<thead><tr><th>#</th><th>Pair</th><th>Time(ms)</th><th>White</th><th>Black</th><th>Result</th><th>Reason</th><th>Moves</th></tr></thead>' +
+                '<tbody>' + rows + '</tbody></table>';
+        }
+    </script>
+</body>
+</html>
