@@ -46,7 +46,7 @@ gui/
 
 ## Todo
 ### BUGS
-- [ ] Fix the bug where the chess engine UI is frozen, When start is clicked, the game actually works is being played, but the moves are not shown on the board
+- [x] Fix the bug where the chess engine UI is frozen, When start is clicked, the game actually works is being played, but the moves are not shown on the board
 
 ### Persistence & Engine Registry
 - [ ] Design SQLite schema (Engine, EvaluationSession, Game tables)

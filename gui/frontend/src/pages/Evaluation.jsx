@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react'
-import { Chessboard } from 'react-chessboard'
-import { useInterval } from '../hooks/useInterval'
+import { useState, useEffect } from 'react'
+import { io } from 'socket.io-client'
+import ChessBoard from '../components/ChessBoard'
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
@@ -23,15 +23,15 @@ export default function Evaluation() {
   const [maxTime, setMaxTime] = useState(10000)
 
   const [evalData, setEvalData] = useState(null)
-  const [polling, setPolling] = useState(false)
-  const lastGamesLen = useRef(-1)
 
-  useInterval(async () => {
-    const r = await fetch('/api/eval/state')
-    const data = await r.json()
-    setEvalData(data)
-    if (!data.running) setPolling(false)
-  }, polling ? 500 : null)
+  // WebSocket connection
+  useEffect(() => {
+    const socket = io({ path: '/socket.io' })
+    socket.on('eval_update', (data) => {
+      setEvalData(data)
+    })
+    return () => socket.disconnect()
+  }, [])
 
   async function startEval() {
     if (!engine1 || !engine2) { alert('Enter both engine paths'); return }
@@ -46,8 +46,6 @@ export default function Evaluation() {
     })
     const data = await r.json()
     if (data.error) { alert(data.error); return }
-    lastGamesLen.current = -1
-    setPolling(true)
   }
 
   async function stopEval() {
@@ -55,7 +53,6 @@ export default function Evaluation() {
   }
 
   async function copyGamePgn(game) {
-    // Build minimal PGN from game record
     const result = game.result
     const pgn = `[White "${game.white}"]\n[Black "${game.black}"]\n[Result "${result}"]\n\n${result}`
     await navigator.clipboard.writeText(pgn)
@@ -69,7 +66,6 @@ export default function Evaluation() {
 
   return (
     <div className="page">
-      {/* Eval is wider than match — override page max-width */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', maxWidth: 1160, margin: '0 auto' }}>
 
         {/* Config */}
@@ -117,12 +113,10 @@ export default function Evaluation() {
             <div style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 8, padding: '6px 10px', background: '#1a1917', borderRadius: 4 }}>
               ● {d?.current_black || '—'}
             </div>
-            <Chessboard
-              id="evalBoard"
-              boardWidth={320}
-              position={d?.current_fen || START_FEN}
-              arePiecesDraggable={false}
-              customPieces={CUSTOM_PIECES}
+            <ChessBoard
+              fen={d?.current_fen || START_FEN}
+              size={320}
+              interactive={false}
             />
             <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 8, padding: '6px 10px', background: '#1a1917', borderRadius: 4 }}>
               ○ {d?.current_white || '—'}
@@ -241,12 +235,3 @@ export default function Evaluation() {
     </div>
   )
 }
-
-const CUSTOM_PIECES = Object.fromEntries(
-  ['wK','wQ','wR','wB','wN','wP','bK','bQ','bR','bB','bN','bP'].map(code => [
-    code,
-    ({ squareWidth }) => (
-      <img src={`/pieces/${code}.png`} style={{ width: squareWidth, height: squareWidth }} alt={code} />
-    )
-  ])
-)

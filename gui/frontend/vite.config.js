@@ -7,6 +7,11 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:5000',
       '/pieces': 'http://localhost:5000',
+      '/socket.io': {
+        target: 'http://localhost:5000',
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
   build: {
